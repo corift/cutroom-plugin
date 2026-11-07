@@ -15,6 +15,8 @@
  *   cutroom final "<video folder>" [edit/trials_v3.mp4 …]   # default: every approved cut
  *   cutroom wait "<video folder>" [--kind render|storyboard]
  *   cutroom watch ["<video folder>"]      # one JSON line per review event, for Monitor
+ *   cutroom script edit/hook.script.md [--project shorts] [--title "Code isn't the moat"]   # to the phone
+ *   cutroom scripts [--project shorts]   # what's on the phone's Scripts tab
  *   cutroom link <project> [<folder>] [--videos "short form"]   # this folder (default: here) is the project
  *   cutroom link                          # show where each project lives
  *   cutroom unlink <project>              # forget this Mac's folder for the project
@@ -126,6 +128,8 @@ try {
   else if (cmd === "final") await promoteFinal(videoDir(positional[0]), positional.slice(1));
   else if (cmd === "wait") await waitFor(videoDir(positional[0]), flags.kind);
   else if (cmd === "watch") await watch(positional[0] && videoDir(positional[0]));
+  else if (cmd === "script") await sendScript(positional[0], flags);
+  else if (cmd === "scripts") await listScripts(flags.project);
   else if (cmd === "link") link(positional[0], positional[1], flags.videos);
   else if (cmd === "unlink") unlink(positional[0]);
   else {
@@ -363,7 +367,34 @@ function reviewCopy(video) {
   process.stdout.write(`  making the review copy of ${basename(video)}\n`);
   const run = spawnSync(
     process.env.CUTROOM_FFMPEG ?? "ffmpeg",
-    ['-y', '-v', 'error', '-i', source, '-vf', 'scale=\'if(gt(iw,ih),-2,min(720,iw))\':\'if(gt(iw,ih),min(720,ih),-2)\'', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-maxrate', '2500k', '-bufsize', '5000k', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', partial],
+    [
+      "-y",
+      "-v",
+      "error",
+      "-i",
+      source,
+      "-vf",
+      "scale='if(gt(iw,ih),-2,min(720,iw))':'if(gt(iw,ih),min(720,ih),-2)'",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "26",
+      "-maxrate",
+      "2500k",
+      "-bufsize",
+      "5000k",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "128k",
+      "-movflags",
+      "+faststart",
+      partial
+    ],
     { stdio: ["ignore", "ignore", "pipe"] }
   );
   if (run.error || run.status !== 0 || statSync(partial, { throwIfNoEntry: false })?.size === 0) {
@@ -382,6 +413,42 @@ function reviewCopy(video) {
 }
 
 /** Copies finished cuts to final/<slug>.mp4 with their caption and script. No files: every approved cut. */
+async function sendScript(fileArg, { project, title: titleFlag }) {
+  if (!fileArg) throw new Error("which file? e.g. cutroom script edit/hook.script.md");
+  const abs = resolve(fileArg);
+  if (!existsSync(abs)) throw new Error(`${fileArg} not found`);
+  const raw = readFileSync(abs, "utf8").trim();
+  const heading = raw.match(/^#\s+(.+)\n+/);
+  const title =
+    (typeof titleFlag === "string" && titleFlag) ||
+    heading?.[1].trim() ||
+    basename(abs)
+      .replace(/(\.script)?\.(md|txt)$/i, "")
+      .replace(/[-_]+/g, " ");
+  const text = heading && typeof titleFlag !== "string" ? raw.slice(heading[0].length) : raw;
+  const slug = typeof project === "string" ? project : undefined;
+  const existing = (await convex("query", "scripts:list", { project: slug })).find(
+    (s) => s.title === title
+  );
+  if (existing) {
+    await convex("mutation", "scripts:update", { id: existing.id, text });
+    return console.log(`updated script "${title}" on the phone (${existing.id})`);
+  }
+  const id = await convex("mutation", "scripts:create", { title, text, project: slug });
+  console.log(`added script "${title}" to the phone (${id})`);
+}
+
+async function listScripts(project) {
+  const scripts = await convex("query", "scripts:list", {
+    project: typeof project === "string" ? project : undefined
+  });
+  if (!scripts.length) return console.log("no scripts");
+  for (const s of scripts)
+    console.log(
+      `${s.id}  ${s.title}${s.project ? `  [${s.project}]` : ""}  (${s.text.length} chars)`
+    );
+}
+
 async function promoteFinal(dir, files) {
   const renders = (await convex("query", "reviews:list", {})).filter(
     (r) => r.dir === dir && r.kind === "render"
