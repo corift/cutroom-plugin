@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 432px; height: 768px; overflow: hidden; background: transparent; font-family: Figtree, -apple-system, sans-serif; color: #1b1b22; -webkit-font-smoothing: antialiased; }
+  .note { position: absolute; left: 22px; right: 22px; display: flex; align-items: center; gap: 11px; background: rgba(255,255,255,.96); border-radius: 16px; padding: 11px 13px; box-shadow: 0 8px 24px rgba(0,0,0,.28); opacity: 0; }
+  .logo { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 15px; flex-shrink: 0; }
+  .grow { flex: 1; }
+  .name { font-size: 15px; font-weight: 700; }
+  .sub { font-size: 12.5px; color: #77737f; margin-top: 1px; }
+  .amt { font-size: 15px; font-weight: 700; color: #b5054f; font-variant-numeric: tabular-nums; }
+  .phone { position: absolute; width: 190px; height: 338px; border-radius: 28px; border: 6px solid #111; background: #fff 0 0 / 100% auto no-repeat url(recurring-tall.png); box-shadow: 0 14px 40px rgba(0,0,0,.4); opacity: 0; }
+  .bank { position: absolute; display: flex; align-items: center; gap: 10px; background: #fff; border-radius: 14px; padding: 10px 14px; box-shadow: 0 8px 24px rgba(0,0,0,.28); opacity: 0; font-size: 14px; font-weight: 600; }
+  .bank .ck { width: 26px; height: 26px; border-radius: 50%; background: #2e9e5b; color: #fff; display: grid; place-items: center; font-size: 15px; }
+  .bank .sub { font-weight: 500; }
+  .hook { position: absolute; left: 30px; right: 30px; top: 96px; text-align: center; color: #fff; font-size: 23px; font-weight: 800; line-height: 1.2; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 2px 8px rgba(0,0,0,.6); opacity: 0; }
+  .big { position: absolute; left: 34px; right: 34px; display: flex; align-items: center; gap: 12px; background: #fff; border-radius: 18px; padding: 13px 15px; box-shadow: 0 10px 28px rgba(0,0,0,.3); opacity: 0; }
+  .big .logo { width: 42px; height: 42px; font-size: 18px; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; color: #b5054f; background: #fde4ee; border-radius: 6px; padding: 2px 6px; margin-left: 6px; vertical-align: 2px; }
+  .call { position: absolute; left: 50%; top: 560px; width: 300px; margin-left: -150px; display: flex; align-items: center; gap: 12px; background: rgba(28,28,30,.94); color: #fff; border-radius: 22px; padding: 12px 16px; box-shadow: 0 10px 28px rgba(0,0,0,.35); opacity: 0; }
+  .call .ph { width: 38px; height: 38px; border-radius: 50%; background: #34c759; display: grid; place-items: center; font-size: 18px; }
+  .call .sub { color: #aeaeb2; }
+</style>
+</head>
+<body>
+<div class="hook" id="hook">I was paying for 11 subscriptions and had no idea</div>
+<div class="big" id="med" style="top:556px"><div class="logo" style="background:#f47d31">H</div><div class="grow"><div class="name">Headspace<span class="tag">Unused</span></div><div class="sub">Opened 1 time since January</div></div><div class="amt">$12.99/mo</div></div>
+<div class="big" id="icl" style="top:540px"><div class="logo" style="background:#3a8dde">i</div><div class="grow"><div class="name">iCloud+<span class="tag">Cloud storage</span></div><div class="sub">Monthly</div></div><div class="amt">$9.99</div></div>
+<div class="big" id="goo" style="top:614px"><div class="logo" style="background:#4285f4">G</div><div class="grow"><div class="name">Google One<span class="tag">Cloud storage</span></div><div class="sub">Monthly</div></div><div class="amt">$9.99</div></div>
+<div class="call" id="call"><div class="ph">✆</div><div class="grow"><div class="name">Customer Service</div><div class="sub" id="ctime">On hold · 47:12</div></div></div>
+<div id="notes"></div>
+<div class="phone" id="phone"></div>
+<div class="bank" id="bank"><span class="ck">✓</span><div><div>Bank connected</div><div class="sub">Checking ••4821</div></div></div>
+<script>
+  const six = [
+    ["Planet Fitness", "#7b2d8e", "24.99"],
+    ["Max", "#1d2bd9", "16.99"],
+    ["Audible", "#f39c12", "14.95"],
+    ["Headspace", "#f47d31", "12.99"],
+    ["Paramount+", "#0064ff", "12.99"],
+    ["Duolingo", "#58cc02", "12.99"],
+  ];
+  const $ = (id) => document.getElementById(id);
+  $("notes").innerHTML = six.map(([n, c, p], i) =>
+    `<div class="note" id="n${i}"><div class="logo" style="background:${c}">${n[0]}</div><div class="grow"><div class="name">${n}</div><div class="sub">Charged · monthly</div></div><div class="amt">−$${p}</div></div>`
+  ).join("");
+
+  const clamp = (x) => Math.max(0, Math.min(1, x));
+  const back = (x) => { x = clamp(x); const c = 1.7; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+  const fadeOut = (t, end) => clamp((end - t) / 0.2);
+
+  function reset() {
+    six.forEach((_, i) => { $("n" + i).style.opacity = 0; });
+    $("phone").style.opacity = 0; $("bank").style.opacity = 0;
+    ["hook", "med", "icl", "goo", "call"].forEach((id) => { $(id).style.opacity = 0; });
+  }
+
+  function pop(id, t, a, dur, dy = 24) {
+    const k = back((t - a) / 0.3), el = $(id);
+    el.style.opacity = Math.min(clamp((t - a) / 0.1), fadeOut(t, dur));
+    el.style.transform = `translateY(${(1 - k) * dy}px) scale(${0.85 + 0.15 * k})`;
+  }
+
+  const shots = {
+    hook: (t, dur) => { $("hook").style.opacity = Math.min(clamp(t / 0.15), fadeOut(t, dur)); },
+    med: (t, dur) => { pop("med", t, 0.05, dur); },
+    cloud: (t, dur) => { pop("icl", t, 0.05, dur); pop("goo", t, 0.35, dur); },
+    hold: (t, dur) => {
+      pop("call", t, 0.05, dur);
+      const secs = 47 * 60 + 12 + Math.floor(t * 4);
+      $("ctime").textContent = `On hold · ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+    },
+    // six charge cards stack up in the lower half, newest on top, like notifications
+    six: (t, dur) => {
+      six.forEach((_, i) => {
+        const k = back((t - 0.1 - i * 0.28) / 0.3);
+        const el = $("n" + i);
+        el.style.top = 548 + i * 34 - k * 14 + "px";
+        el.style.opacity = Math.min(clamp((t - 0.1 - i * 0.28) / 0.12), fadeOut(t, dur));
+        el.style.transform = `scale(${0.7 + 0.3 * k}) rotate(${(i % 2 ? 1 : -1) * 1.2}deg)`;
+        el.style.zIndex = i;
+      });
+    },
+    // phone with the Recurring screen pops up lower right, then a bank-connected card
+    phone: (t, dur) => {
+      const k = back((t - 0.05) / 0.35);
+      const p = $("phone");
+      p.style.left = "240px"; p.style.top = 130 + (1 - k) * 120 + "px";
+      p.style.opacity = Math.min(clamp(t / 0.1), fadeOut(t, dur));
+      p.style.transform = `rotate(${6 - 2 * k}deg) scale(${0.8 + 0.2 * k})`;
+      const inner = 178, tall = 1082 * (inner / 432), view = 326;
+      const sc = clamp((t - 2.85) / 1.6);
+      p.style.backgroundPosition = `0 ${-(tall - view) * (sc < 0.5 ? 2 * sc * sc : 1 - Math.pow(-2 * sc + 2, 2) / 2)}px`;
+      const kb = back((t - 2.3) / 0.3);
+      const b = $("bank");
+      b.style.left = "24px"; b.style.top = 560 + (1 - kb) * 30 + "px";
+      b.style.opacity = Math.min(clamp((t - 2.3) / 0.12), fadeOut(t, dur));
+      b.style.transform = `scale(${0.8 + 0.2 * kb})`;
+    },
+  };
+  window.render = (shot, t, dur) => { reset(); shots[shot](t, dur); };
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{
+  "name": "cutroom",
+  "description": "Edit talking-head videos with Claude Code: cut, storyboard, render with ffmpeg, and review timestamped notes at cutroom.so.",
+  "author": { "name": "Cutroom", "url": "https://cutroom.so" },
+  "homepage": "https://cutroom.so",
+  "keywords": ["video", "editing", "ffmpeg", "shorts", "review"]
+}

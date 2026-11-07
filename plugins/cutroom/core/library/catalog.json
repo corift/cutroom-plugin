@@ -1,0 +1,363 @@
+{
+  "kinds": {
+    "format": "Formats",
+    "layout": "Layouts",
+    "captions": "Captions",
+    "graphic": "Graphics",
+    "app": "App screens",
+    "motion": "Motion"
+  },
+  "components": [
+    {
+      "id": "slash-demo",
+      "name": "Claude app demo",
+      "kind": "format",
+      "on": true,
+      "code": "basics.chat",
+      "summary": "A slash command typed into the Claude app, then the finished clip as the reply.",
+      "use": "showing how you made it, skill demos"
+    },
+    {
+      "id": "prompt-to-result",
+      "name": "Write this, get this",
+      "kind": "format",
+      "on": true,
+      "code": "basics.prompt + basics.face_panel",
+      "summary": "The prompt types in, sends, and the finished clip grows up to fill the frame.",
+      "use": "hooks for tutorials, before and after"
+    },
+    {
+      "id": "talking-head",
+      "name": "Talking head",
+      "kind": "layout",
+      "on": true,
+      "code": "layout.Framing.face",
+      "summary": "Full-frame face with a barely-there drift between cuts.",
+      "use": "opinions, turns, the hook"
+    },
+    {
+      "id": "punch-in",
+      "name": "Punch-in",
+      "kind": "layout",
+      "on": true,
+      "code": "layout.Framing.face(punch=)",
+      "summary": "Hard cut to a 1.2× zoom on a phrase start. Nothing else changes.",
+      "use": "face beats longer than ~2.5s"
+    },
+    {
+      "id": "full-clip",
+      "name": "Full-screen clip",
+      "kind": "layout",
+      "on": true,
+      "code": "layout.full",
+      "summary": "B-roll or a screen recording takes the whole frame; captions stay.",
+      "use": "showing the real thing"
+    },
+    {
+      "id": "page-split",
+      "name": "Split screen",
+      "kind": "layout",
+      "on": true,
+      "code": "basics.transcript + basics.face_panel + basics.caption",
+      "summary": "Dark page with the graphic on top, you filling the bottom, a black caption chip on the seam.",
+      "use": "most explainers and walkthroughs"
+    },
+    {
+      "id": "video-grid",
+      "name": "Video grid",
+      "kind": "layout",
+      "on": true,
+      "code": "blocks.image_grid",
+      "summary": "Four clips play at once in a 2×2 grid, each one coming into focus.",
+      "use": "showing many examples at once"
+    },
+    {
+      "id": "clip-wall",
+      "name": "Clip wall behind you",
+      "kind": "layout",
+      "on": true,
+      "code": "viral.swap(tiles=)",
+      "summary": "The room behind you swaps for a wall of playing clips; you stay cut out on top.",
+      "use": "\"look at all of these\" moments"
+    },
+    {
+      "id": "landscape-clip",
+      "name": "Landscape clip",
+      "kind": "layout",
+      "on": true,
+      "code": "viral.inset(ratio=9/16)",
+      "summary": "A landscape clip plays in a card over a blurred copy of itself.",
+      "use": "wide B-roll or a desktop screen recording"
+    },
+    {
+      "id": "clip-split",
+      "name": "Clip over you",
+      "kind": "layout",
+      "on": true,
+      "code": "layout.Stack",
+      "summary": "The clip plays in the top half while you talk in the bottom half.",
+      "use": "talking over B-roll"
+    },
+    {
+      "id": "screen-zoom",
+      "name": "Screen zoom",
+      "kind": "layout",
+      "on": true,
+      "code": "viral.screen",
+      "summary": "A screen recording pushes in, a red box marks the spot, then it cuts to a zoom.",
+      "use": "pointing at one thing on screen"
+    },
+    {
+      "id": "subtitle",
+      "name": "Subtitle",
+      "kind": "captions",
+      "on": false,
+      "code": "captions.draw(style=\"subtitle\")",
+      "summary": "A clean sentence-case line low in the frame, like proper subtitles.",
+      "use": "calmer, longer talking videos"
+    },
+    {
+      "id": "kallaway",
+      "name": "Bold",
+      "kind": "captions",
+      "on": true,
+      "code": "captions.draw(style=\"kallaway\")",
+      "summary": "Big white words, one or two at a time, centred. Key phrases switch to an italic serif.",
+      "use": "the default for talking reels"
+    },
+    {
+      "id": "box",
+      "name": "Box",
+      "kind": "captions",
+      "on": false,
+      "code": "captions.draw(style=\"box\")",
+      "summary": "Bold words, and the one being said sits on an accent-coloured box.",
+      "use": "punchy explainers and ads"
+    },
+    {
+      "id": "pop",
+      "name": "Pop",
+      "kind": "captions",
+      "on": false,
+      "code": "captions.draw(style=\"pop\")",
+      "summary": "Heavy uppercase words with a black outline. The word being said turns yellow.",
+      "use": "high-energy talking clips"
+    },
+    {
+      "id": "rpn",
+      "name": "Mono",
+      "kind": "captions",
+      "on": false,
+      "code": "captions.draw(style=\"rpn\")",
+      "summary": "Small uppercase monospace, up to three words, on a dark pill over seams.",
+      "use": "a quieter, techy look"
+    },
+    {
+      "id": "step-header",
+      "name": "Step header",
+      "kind": "graphic",
+      "on": true,
+      "code": "basics.step",
+      "summary": "An accent Step tag with the step title typing on beside it.",
+      "use": "tutorials, how-tos"
+    },
+    {
+      "id": "hook-card",
+      "name": "Hook card",
+      "kind": "graphic",
+      "on": true,
+      "code": "basics.hook",
+      "summary": "The opening title in big narrow caps with one serif italic word.",
+      "use": "the first two seconds"
+    },
+    {
+      "id": "prompt-card",
+      "name": "Prompt card",
+      "kind": "graphic",
+      "on": true,
+      "code": "basics.prompt",
+      "summary": "A Claude prompt typing in with the file attached, then send.",
+      "use": "what you asked Claude to do"
+    },
+    {
+      "id": "check-card",
+      "name": "Checklist",
+      "kind": "graphic",
+      "on": true,
+      "code": "basics.checklist",
+      "summary": "Rows tick one after another in the accent colour.",
+      "use": "steps, rules, what got done"
+    },
+    {
+      "id": "view-count",
+      "name": "View counter",
+      "kind": "graphic",
+      "on": true,
+      "code": "basics.counter",
+      "summary": "A huge view count climbing with an accent bar filling under it.",
+      "use": "results, proof"
+    },
+    {
+      "id": "folder-card",
+      "name": "Folder",
+      "kind": "graphic",
+      "on": true,
+      "code": "basics.folder",
+      "summary": "A project folder with files sliding in on a tree line.",
+      "use": "setup, what goes where"
+    },
+    {
+      "id": "list-card",
+      "name": "Numbered list",
+      "kind": "graphic",
+      "on": true,
+      "code": "basics.numbered",
+      "summary": "Numbered rows that light up as you say them.",
+      "use": "top 3s, rules, steps"
+    },
+    {
+      "id": "bar-chart",
+      "name": "Bar chart",
+      "kind": "graphic",
+      "on": true,
+      "code": "basics.bars",
+      "summary": "Bars grow in with their numbers, the top one in the accent colour.",
+      "use": "stats, your best posts"
+    },
+    {
+      "id": "compare-row",
+      "name": "Compare row",
+      "kind": "graphic",
+      "on": true,
+      "code": "basics.compare",
+      "summary": "Three thumbnails labelled bad, good, best with view pills.",
+      "use": "before and after, what works"
+    },
+    {
+      "id": "comment-cta",
+      "name": "Comment end card",
+      "kind": "graphic",
+      "on": true,
+      "code": "basics.cta",
+      "summary": "Comment KEYWORD, huge, with one line on what they get.",
+      "use": "the last beat"
+    },
+    {
+      "id": "slow-push",
+      "name": "Slow push",
+      "kind": "motion",
+      "on": true,
+      "code": "blocks.push_layer",
+      "summary": "The whole scene pushes in slowly so nothing ever sits frozen.",
+      "use": "every hold"
+    },
+    {
+      "id": "floating-clip",
+      "name": "Floating clip",
+      "kind": "motion",
+      "on": true,
+      "code": "viral.floating_clip",
+      "summary": "A clip pops in over you in a white-edged card with a source tag.",
+      "use": "reacting to or citing a video"
+    },
+    {
+      "id": "clip-fan",
+      "name": "Clip fan",
+      "kind": "motion",
+      "on": true,
+      "code": "viral.fan",
+      "summary": "Three clips fan out at once in tilted cards.",
+      "use": "a few quick examples"
+    },
+    {
+      "id": "clips-around",
+      "name": "Clips around you",
+      "kind": "motion",
+      "on": true,
+      "code": "viral.depth",
+      "summary": "Clips float at different depths around you, some behind and some in front.",
+      "use": "a busy, layered moment"
+    },
+    {
+      "id": "clips-fly-out",
+      "name": "Clips fly out",
+      "kind": "motion",
+      "on": true,
+      "code": "viral.fly",
+      "summary": "Clip cards fly out from behind your head and hang at the sides.",
+      "use": "an idea that branches out"
+    },
+    {
+      "id": "chat-app",
+      "name": "Chat app",
+      "kind": "app",
+      "on": true,
+      "code": "screens.assistant",
+      "summary": "A chat with an assistant: the prompt types, sends, and the reply streams in.",
+      "use": "showing what you asked an AI and what it said"
+    },
+    {
+      "id": "terminal-app",
+      "name": "Terminal",
+      "kind": "app",
+      "on": true,
+      "code": "screens.terminal",
+      "summary": "A coding agent in a terminal: a command types, files change, a tick when it's done.",
+      "use": "showing an agent doing the work"
+    },
+    {
+      "id": "notes-app",
+      "name": "Notes",
+      "kind": "app",
+      "on": true,
+      "code": "screens.notes",
+      "summary": "A notes page writing itself line by line.",
+      "use": "lists, ideas, scripts, plans"
+    },
+    {
+      "id": "text-thread",
+      "name": "Text messages",
+      "kind": "app",
+      "on": true,
+      "code": "screens.texts",
+      "summary": "A text thread with typing dots and bubbles popping in.",
+      "use": "a conversation, a reaction, a question someone asked"
+    },
+    {
+      "id": "social-post",
+      "name": "Social post",
+      "kind": "app",
+      "on": true,
+      "code": "screens.post",
+      "summary": "A post card with its replies, reposts and likes counting up.",
+      "use": "a quote, a take, proof something landed"
+    },
+    {
+      "id": "analytics-app",
+      "name": "Analytics",
+      "kind": "app",
+      "on": true,
+      "code": "screens.analytics",
+      "summary": "An analytics screen: the total counts up and the line draws in.",
+      "use": "growth, results, numbers over time"
+    },
+    {
+      "id": "inbox-app",
+      "name": "Inbox",
+      "kind": "app",
+      "on": true,
+      "code": "screens.inbox",
+      "summary": "Emails arriving one after another at the top of an inbox.",
+      "use": "deals, replies, things landing in your inbox"
+    },
+    {
+      "id": "browser-page",
+      "name": "Browser",
+      "kind": "app",
+      "on": true,
+      "code": "screens.browser",
+      "summary": "A web page that scrolls, then one line gets highlighted.",
+      "use": "citing an article, a source, a quote from a page"
+    }
+  ]
+}

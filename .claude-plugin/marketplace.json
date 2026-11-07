@@ -1,0 +1,15 @@
+{
+  "name": "cutroom",
+  "owner": {
+    "name": "Cutroom",
+    "url": "https://cutroom.so"
+  },
+  "description": "Cutroom: video editing with Claude Code, reviewed at cutroom.so.",
+  "plugins": [
+    {
+      "name": "cutroom",
+      "source": "./plugins/cutroom",
+      "description": "Edit talking-head videos with Claude Code: cut, storyboard, render with ffmpeg, and review timestamped notes at cutroom.so."
+    }
+  ]
+}

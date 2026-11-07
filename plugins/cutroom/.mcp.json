@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cutroom": {
+      "type": "http",
+      "url": "https://cutroom.so/api/mcp"
+    }
+  }
+}

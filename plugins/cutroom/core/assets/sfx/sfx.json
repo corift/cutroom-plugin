@@ -1,0 +1,86 @@
+{
+ "_about": "SFX registry for storyboard cues. onset = seconds into the file where the hit/peak is (lands on the cue time). gain = default level (voice-relative, mix is loudnormed to -14 LUFS). status: ok | off (only if asked) | avoid.",
+ "impact": {
+  "file": "impact-7.wav",
+  "onset": 0.64,
+  "gain": 0.4,
+  "status": "ok",
+  "use": "hook, chapter headers, end card"
+ },
+ "whoosh": {
+  "file": "whoosh-1.wav",
+  "onset": 0.8,
+  "gain": 0.2,
+  "status": "ok",
+  "use": "every change into stack/full layout, big wipes"
+ },
+ "shutter": {
+  "file": "camera-shutter-5.wav",
+  "onset": 0.11,
+  "gain": 0.22,
+  "status": "ok",
+  "use": "clip changes inside a montage"
+ },
+ "click": {
+  "file": "mouse-click.mp3",
+  "onset": 0.56,
+  "gain": 0.28,
+  "status": "ok",
+  "use": "About 6 per video, on real presses. Full gain on a visible press: cursor click, prompt submit (Enter), button tap. Softer (gain ~0.18) when an element lands on its word: focus_in / unblur_text text, a tag, a list item, a logo swap, a number locking in. At most ~1 per 1.5s, and never on top of a real clip that already has its own click sound."
+ },
+ "ding": {
+  "file": "correct-ding.mp3",
+  "onset": 0.14,
+  "gain": 0.14,
+  "status": "ok",
+  "use": "checklist item ticks"
+ },
+ "counter": {
+  "file": "counter-sound.mp3",
+  "onset": 0.0,
+  "gain": 0.2,
+  "start": 14.6,
+  "dur": 1.0,
+  "status": "ok",
+  "use": "numbers / bars counting up"
+ },
+ "riser": {
+  "file": "riser-3.wav",
+  "onset": 0.73,
+  "gain": 0.32,
+  "status": "off",
+  "use": "into a montage or big reveal — user removed it (v5); only if asked"
+ },
+ "pop": {
+  "file": "pop-1.mp3",
+  "onset": 0.0,
+  "gain": 0.0,
+  "status": "avoid",
+  "use": "never — plops read as childish"
+ },
+ "money": {
+  "file": "money-sound-2.wav",
+  "onset": 0.0,
+  "gain": 0.2,
+  "status": "avoid",
+  "use": "revenue claims only, rarely"
+ },
+ "typing": {
+  "file": "keyboard-typing-laptop.mp3",
+  "onset": 0.0,
+  "gain": 0.13,
+  "start": 0.5,
+  "dur": 3.0,
+  "status": "ok",
+  "use": "under on-screen typing (prompt boxes); set the cue's `dur` to the typing length. Source: Mixkit 'Typing on a laptop keyboard' #2531 (Mixkit free license), downloaded 2026-09-26"
+ },
+ "typing_fast": {
+  "file": "keyboard-typing-fast.mp3",
+  "onset": 0.0,
+  "gain": 0.12,
+  "start": 0.5,
+  "dur": 2.0,
+  "status": "ok",
+  "use": "alt, faster typing. Source: Mixkit 'Fast laptop keyboard typing' #1392 (Mixkit free license), 2026-09-26"
+ }
+}
