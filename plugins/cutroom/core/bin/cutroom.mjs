@@ -37,6 +37,7 @@
  * final copies each finished cut to final/<slug>.mp4 with its caption and script, replacing the
  * cut's previous final, so final/ always holds exactly what's done.
  */
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   copyFileSync,
@@ -45,6 +46,8 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
+  rmSync,
   statSync,
   writeFileSync
 } from "node:fs";
@@ -75,7 +78,7 @@ const POLL_MAX = 30000;
 const TEXT_EXT = new Set([".md", ".json", ".txt", ".srt", ".vtt", ".py", ".csv", ".yaml", ".yml"]);
 const INLINE_MAX = 512 * 1024;
 const SKIP =
-  /(^|\/)(\.DS_Store|\.git|\.cutroom|__pycache__|node_modules|(?:sullyedit|cutroom)_chunks[^/]*)(\/|$)|\.(tmp|log)$/;
+  /(^|\/)(\.DS_Store|\.git|\.cutroom|__pycache__|node_modules|\.review|(?:sullyedit|cutroom)_chunks[^/]*)(\/|$)|\.(tmp|log)$/;
 const LARGE_BYTES = 25 * 1024 * 1024;
 const AV = /\.(mp4|mov|m4v|mkv|webm|m4a|mp3|wav|aac|aiff?)$/i;
 const TYPES = {
@@ -224,8 +227,8 @@ async function push(dir, only, { includeMedia = false, textOnly = false, extra =
 }
 
 async function pull(dir, { only } = {}) {
-  const remote = (await convex("query", "files:manifest", { prefix: dir })).filter(
-    (f) => !only || f.path === only
+  const remote = (await convex("query", "files:manifest", { prefix: dir })).filter((f) =>
+    only ? f.path === only : !SKIP.test(f.path)
   );
   const stale = [];
   for (const f of remote) {
@@ -318,9 +321,11 @@ async function publishOne(kind, dir, fileArg, opts) {
     .filter(([name]) => name)
     .map(([name, label]) => ({ label, path: `${editDir}/${name}` }));
 
+  const preview = reviewCopy(video);
+
   await push(dir, relative(dir, editDir) + "/", {
     textOnly: true,
-    extra: [video, ...images.map((i) => i.path)]
+    extra: [video, ...(preview ? [preview] : []), ...images.map((i) => i.path)]
   });
 
   const copy = Object.fromEntries(
@@ -336,6 +341,7 @@ async function publishOne(kind, dir, fileArg, opts) {
     stem,
     version,
     video,
+    ...(preview ? { preview } : {}),
     images,
     beats,
     words,
@@ -345,6 +351,34 @@ async function publishOne(kind, dir, fileArg, opts) {
     ...(process.env.CUTROOM_CHAT_ID ? { chatId: process.env.CUTROOM_CHAT_ID } : {})
   });
   console.log(`published ${kind} ${stem} v${version} → review ${id}`);
+}
+
+function reviewCopy(video) {
+  const source = F.toLocal(video);
+  const path = `${dirname(video)}/.review/${basename(video)}`;
+  const target = F.toLocal(path);
+  if (existsSync(target) && statSync(target).mtimeMs >= statSync(source).mtimeMs) return path;
+  mkdirSync(dirname(target), { recursive: true });
+  const partial = `${target}.part.mp4`;
+  process.stdout.write(`  making the review copy of ${basename(video)}\n`);
+  const run = spawnSync(
+    process.env.CUTROOM_FFMPEG ?? "ffmpeg",
+    ['-y', '-v', 'error', '-i', source, '-vf', 'scale=\'if(gt(iw,ih),-2,min(720,iw))\':\'if(gt(iw,ih),min(720,ih),-2)\'', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26', '-maxrate', '2500k', '-bufsize', '5000k', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', partial],
+    { stdio: ["ignore", "ignore", "pipe"] }
+  );
+  if (run.error || run.status !== 0 || statSync(partial, { throwIfNoEntry: false })?.size === 0) {
+    rmSync(partial, { force: true });
+    console.log(
+      `  no review copy (${run.error?.code ?? run.stderr?.toString().trim().split("\n").pop()}); the app plays the full file`
+    );
+    return undefined;
+  }
+  if (statSync(partial).size >= statSync(source).size) {
+    rmSync(partial, { force: true });
+    return undefined;
+  }
+  renameSync(partial, target);
+  return path;
 }
 
 /** Copies finished cuts to final/<slug>.mp4 with their caption and script. No files: every approved cut. */
