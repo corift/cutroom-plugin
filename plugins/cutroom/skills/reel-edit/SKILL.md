@@ -1,6 +1,6 @@
 ---
 name: reel-edit
-description: Edit a talking-head clip like the viral Claude Code reels — jump cuts, a punch-in on every cut, a different caption style per section, giant words behind the head, full-screen word slabs, a transcript split screen, floating reference clips with pointer captions, screen-recording cuts, background swaps, videos floating around the person, popped cards and chips, whip / glitch / flash transitions, and a sound on every hit. Use when the user asks for a "viral", "reels-style", "TikTok-style" or "fast" edit, says an edit feels flat or slow, or names any effect in effects/. Works on any vertical or landscape talking head (real or AI); everything is cued from the transcript.
+description: Edit a talking-head clip like the viral Claude Code reels — jump cuts, a punch-in on every cut, a different caption style per section, giant words behind the head, full-screen word slabs, a transcript split screen, floating reference clips with pointer captions, screen-recording cuts, background swaps, videos floating around the person, popped cards and chips, whip / glitch / flash transitions, and a sound on every hit. Use only when the user asks for this style by name ("reel-edit", "viral style", "like the viral Claude Code reels") or names an effect in effects/. Never for a project that has its own editing skill unless the user asks; for a normal short, use the project's skill. Works on any vertical or landscape talking head (real or AI); everything is cued from the transcript.
 ---
 
 # Reel edit (the viral reels look)

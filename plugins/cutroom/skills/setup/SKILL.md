@@ -59,9 +59,10 @@ Otherwise the project lives in `~/Cutroom/projects/<slug>`. Either way, give the
 mkdir -p "$V" "$P/.agents/skills" "$P/.claude"
 cp -Rn "$CLAUDE_PLUGIN_ROOT/core/starters/<kind>/skills/." "$P/.agents/skills/"
 [ -e "$P/.claude/skills" ] || ln -s ../.agents/skills "$P/.claude/skills"
+[ -e "$P/skills" ] || ln -s .agents/skills "$P/skills"
 ```
 
-`<kind>` is the project's `kind` (shorts or ugc). `cp -n` never overwrites a skill the user already has.
+`<kind>` is the project's `kind` (shorts or ugc). `cp -n` never overwrites a skill the user already has. `skills/` is how the project's skills sync to Cutroom.
 
 ## 5. Optional: on-device person masking (macOS)
 
