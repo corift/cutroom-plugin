@@ -230,6 +230,26 @@ async function push(dir, only, { includeMedia = false, textOnly = false, extra =
   console.log(`${dir}: pushed ${changed.length} changed files, uploaded ${mb(uploaded)}`);
 }
 
+async function fetchTexts(files) {
+  const texts = new Map();
+  let batch = [];
+  let bytes = 0;
+  const flush = async () => {
+    if (!batch.length) return;
+    for (const f of await convex("query", "files:texts", { paths: batch }))
+      texts.set(f.path, f.text);
+    batch = [];
+    bytes = 0;
+  };
+  for (const f of files) {
+    if (batch.length >= 50 || (batch.length && bytes + f.size > 4 * 1024 * 1024)) await flush();
+    batch.push(f.path);
+    bytes += f.size;
+  }
+  await flush();
+  return texts;
+}
+
 async function pull(dir, { only } = {}) {
   const remote = (await convex("query", "files:manifest", { prefix: dir })).filter((f) =>
     only ? f.path === only : !SKIP.test(f.path)
@@ -250,15 +270,18 @@ async function pull(dir, { only } = {}) {
       })
     : [];
   const urlByKey = new Map(links.map((l) => [l.key, l.url]));
+  const texts = await fetchTexts(stale.filter((f) => f.hasText && f.text === undefined));
 
   let downloaded = 0;
   for (const f of stale) {
     const abs = F.toLocal(f.path);
     mkdirSync(dirname(abs), { recursive: true });
-    if (f.text !== undefined) {
-      writeFileSync(abs, f.text);
+    const text = f.text ?? texts.get(f.path);
+    if (text !== undefined) {
+      writeFileSync(abs, text);
       continue;
     }
+    if (f.hasText) continue;
     process.stdout.write(`  ↓ ${f.path} (${mb(f.size)})\n`);
     const res = await fetch(urlByKey.get(f.r2Key));
     if (!res.ok) throw new Error(`download failed for ${f.path}: ${res.status}`);
