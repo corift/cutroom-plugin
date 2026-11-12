@@ -203,6 +203,11 @@ class Reel:
                     self.cue(m["end"] - V.SLIDE_FALL, "whoosh", 0.4)
             elif do == "refs":
                 self.cue(t, *REF_SFX.get(m.get("mode", "inset"), ("whoosh", 0.7)))
+            elif do == "orbit":
+                self.cue(t, "whoosh", 0.8)
+                self.cue(m["end"] - 0.3, "whoosh", 0.4)
+            elif do == "spotlight":
+                self.cue(t, "whoosh", 0.5)
         for e in self.plan.get("sfx", []):
             self.cue(self.out_time(e["at"], self.src_time(e.get("after"), -1.0) if e.get("after") else -1.0),
                      e["name"], e.get("gain", 1.0))
@@ -217,6 +222,14 @@ class Reel:
         if punches:
             p = punches[-1]
             return p.get("zoom", 1.5) + 0.06 * (t - p["t"])
+        z = self.cut_zoom(t, sec)
+        for m in self.active(t, "spotlight"):
+            k, out = t - m["t"], m["end"] - m["t"] - 0.3
+            push = z + (m.get("zoom", 1.4) - z) * V.cubic(min(1.0, k / m.get("push", 0.8)))
+            z += (push - z) * (1 - V.inout(max(0.0, min(1.0, (k - out) / 0.3))))
+        return z
+
+    def cut_zoom(self, t, sec):
         cuts = [c for c in self.tl.cuts if sec["t"] <= c <= t]
         t0 = max([sec["t"]] + cuts)
         z = sec.get("zoom", 1.0) * (1.12 if len(cuts) % 2 else 1.0)
@@ -336,6 +349,15 @@ class Reel:
         mshot = V.shot(mk, z, self.fy, dx * mk.width / W, dy * mk.width / W) if mk is not None else None
         for m in self.active(t, "blur"):
             V.blur_band(cv, m.get("y", 1250), m.get("h", 300))
+        for m in self.active(t, "spotlight"):
+            cv = V.spotlight(cv, t - m["t"], V.person(cv, mshot) if mshot is not None else None, m.get("text"),
+                             m.get("y", H * self.fy - 290), tuple(m.get("rgb", V.NEON)), m.get("dim", 0.86), m.get("blur", 12),
+                             m["end"] - m["t"] - 0.3)
+        for m in self.active(t, "orbit"):
+            k = t - m["t"]
+            V.orbit(cv, k, self.frames(m, k, (360, 640)), V.person(cv, mshot) if mshot is not None else None,
+                    (W / 2, m.get("y", H * self.fy + 40)), m.get("rx", 430), m.get("ry", 300), m.get("w", 180),
+                    m.get("speed", 1.1), m.get("tilt", -8.0), m["end"] - m["t"] - 0.22)
         for m in self.active(t, "swap"):
             if mshot is not None:
                 k = t - m["t"]

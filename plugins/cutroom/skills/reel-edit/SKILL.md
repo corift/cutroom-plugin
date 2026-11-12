@@ -74,6 +74,8 @@ Everything in this look is set in TikTok Sans, which ships with Cutroom (`assets
    - a real thing named in the script (a place, a launch, a page): `slide`, with the actual photo or clip
    - a turn, "pulls me out", "all my videos": `swap` (a colour, or a `wall` of their videos)
    - several demos, "my results", "the final cut": `refs` with `fan`, `float`, `fly` or `result`
+   - "every video you make", "all my videos": `orbit`, their videos circling the head
+   - a name or reveal that should feel like a stage moment: `spotlight`
 4. **Write `edit/plan.json`** and render stills at the start of every section and moment (`--preview`).
    - **Gate:** no caption over the chin or under a card, no burned-in text from the source showing (hide it with a `punch` or `blur`), no section without a camera change.
 5. **Render**, then watch it at phone size.

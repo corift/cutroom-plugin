@@ -1082,6 +1082,95 @@ def fly(canvas, k, frames, cutout, head=(540, 700), w=260):
         canvas.alpha_composite(cutout)
 
 
+NEON = (255, 46, 132)
+
+
+def spotlight(canvas, k, cutout=None, word=None, cy=620, glow=NEON, dim=0.86, blur=12, out=None):
+    """the room goes dark and soft while the person stays lit (`cutout`), with an optional neon serif word glowing
+    behind the head. Pair it with a slow push-in. Eases in over 0.4s and back out over 0.3s after `out`."""
+    a = inout(clamp(k / 0.4))
+    if out is not None and k > out:
+        a *= 1 - inout(clamp((k - out) / 0.3))
+    if a <= 0.003:
+        return canvas
+    bg = canvas.convert("RGB").filter(ImageFilter.GaussianBlur(blur * a))
+    shade = np.asarray(_vignette(), np.float32)[..., None] / 255
+    px = np.asarray(bg, np.float32) * (1 - dim * a * shade)
+    cv = Image.fromarray(px.astype(np.uint8)).convert("RGBA")
+    if word:
+        _fade_in(cv, _neon(word, glow), a, int(cy) - 200)
+    if cutout is not None:
+        cv.alpha_composite(cutout)
+    return cv
+
+
+def _fade_in(canvas, lay, a, y):
+    lay = lay.copy()
+    lay.putalpha(lay.split()[3].point(lambda v: int(v * a)))
+    canvas.alpha_composite(lay, (0, y))
+
+
+@lru_cache(1)
+def _vignette():
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    d = np.clip(np.hypot((xx - W / 2) / (W * 0.75), (yy - H * 0.42) / (H * 0.6)), 0, 1)
+    return Image.fromarray(((0.8 + 0.2 * d * d) * 255).astype(np.uint8), "L")
+
+
+@lru_cache(8)
+def _neon(word, glow):
+    size = 250
+    f = sit(size, 900)
+    while f.getlength(word) > 980 and size > 80:
+        size -= 10
+        f = sit(size, 900)
+    lay = Image.new("RGBA", (W, 400), (0, 0, 0, 0))
+    ImageDraw.Draw(lay).text((W / 2, 200), word, font=f, fill=glow + (255,), anchor="mm")
+    out = Image.new("RGBA", lay.size, (0, 0, 0, 0))
+    for r, g in ((60, 1.6), (24, 2.2), (8, 2.4), (3, 1.4)):
+        halo = lay.filter(ImageFilter.GaussianBlur(r))
+        halo.putalpha(halo.split()[3].point(lambda v, g=g: min(255, int(v * g))))
+        out.alpha_composite(halo)
+    core = Image.new("RGBA", lay.size, (0, 0, 0, 0))
+    ImageDraw.Draw(core).text((W / 2, 200), word, font=f, fill=(255, 205, 225, 255), anchor="mm")
+    out.alpha_composite(core)
+    return out
+
+
+def orbit(canvas, k, frames, cutout=None, head=(540, 700), rx=430, ry=300, w=180, speed=1.1, tilt=-8.0, out=None):
+    """clip cards circling the head on a tilted ring: they spiral out from behind the head, pass behind the person
+    (smaller, dimmer, soft) and in front (bigger, sharp), and pull back in after `out`."""
+    n = len([f for f in frames if f is not None])
+    if not n:
+        return
+    e = back(clamp(k / 0.5), 1.1)
+    if out is not None and k > out:
+        e *= 1 - cubic(clamp((k - out) / 0.22))
+    ct, st = math.cos(math.radians(tilt)), math.sin(math.radians(tilt))
+    cards = []
+    for i, f in enumerate(f for f in frames if f is not None):
+        th = 2 * math.pi * i / n + speed * k - 1.8 * (1 - clamp(k / 0.6))
+        ox, oy = rx * e * math.cos(th), ry * e * math.sin(th)
+        z = math.sin(th)
+        cards.append((z, f, head[0] + ox * ct - oy * st, head[1] + ox * st + oy * ct, -9 * math.cos(th)))
+    cards.sort(key=lambda c: c[0])
+    drawn_person = cutout is None
+    for z, f, x, y, rot in cards:
+        if not drawn_person and z >= 0:
+            canvas.alpha_composite(cutout)
+            drawn_person = True
+        c = _card(f, w)
+        if z < 0:
+            alpha = c.split()[3]
+            c = darken(c, -z * 0.9)
+            c.putalpha(alpha)
+            c = c.filter(ImageFilter.GaussianBlur(2.5 * -z))
+        s = (0.82 + 0.22 * z) * (0.35 + 0.65 * clamp(e))
+        place(canvas, c, x, y, s, rot, clamp(e * 2.5), (0, 16, 28, 140))
+    if not drawn_person:
+        canvas.alpha_composite(cutout)
+
+
 def result(frame, k, under=None):
     """a result card that grows from an inset to full frame in two frames, then holds."""
     full = cover(frame).convert("RGBA")
