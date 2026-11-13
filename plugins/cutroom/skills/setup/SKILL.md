@@ -78,3 +78,13 @@ node "$CLAUDE_PLUGIN_ROOT/core/bin/cutroom.mjs" help >/dev/null && echo "cli ok"
 ```
 
 Then tell the user how to start: put a recording in a new `<YYYY-MM-DD-slug>/` folder in the project's videos folder (or just give Claude the file path) and ask Claude to edit it. Reviews show up at https://cutroom.so/app.
+
+## Updates
+
+Cutroom updates itself: at session start it checks for a new version (at most every 6 hours), installs it in the background, and the next session-start note says to restart Claude Code. If the user asks to update now, or an edit behaves like an old version:
+
+```bash
+claude plugin marketplace update cutroom && claude plugin update cutroom@cutroom
+```
+
+Then ask them to restart Claude Code. `CUTROOM_AUTO_UPDATE=0` turns the automatic check off.
