@@ -284,7 +284,7 @@ def main():
             if "--safe" in sys.argv: im = SZ.overlay(im).convert("RGB")
             im.save(f"previews/p_{t:05.2f}.jpg", quality=85)
         return
-    # parallel chunks on all cores (~40 fps vs ~3 fps sequential); --workers N to override
+    # parallel chunks on all cores; --workers N to override
     workers = int(sys.argv[sys.argv.index("--workers") + 1]) if "--workers" in sys.argv else None
     PR.render(OUT, n, make_frame, open_sources, audio=MIX if os.path.exists(MIX) else None, workers=workers)
 

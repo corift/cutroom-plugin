@@ -15,11 +15,11 @@ Reuses the cut/caption code of the Cutroom engine (cutroom.cutplan / cutroom.cap
       --preview 1.5,8,20  write stills to previews/ instead of rendering
 keeps.json: [[src_start, src_end], [s, e, 0.02], ...]  (sentence-level, source seconds; 3rd value = snap window)
 """
-import sys, os, json, subprocess
+import sys, os, json, subprocess, functools
 sys.path.insert(0, os.environ.get("CUTROOM_ENGINE", ""))  # $CUTROOM_CORE/engine; the agent also sets PYTHONPATH
 from PIL import Image
-from cutroom import cutplan as cp, captions as cap
-from cutroom.core import Reader, probe_duration, paste, font, text_img
+from cutroom import cutplan as cp, captions as cap, parallel
+from cutroom.core import Reader, probe_duration, probe_size, paste, font, text_img
 
 FPS = 30
 VOICE_EQ = ("highpass=f=90:poles=2,equalizer=f=150:t=q:w=0.9:g=-6,equalizer=f=300:t=q:w=1.2:g=-2,"
@@ -35,11 +35,6 @@ def caption_img(text, pill, em, face):
 
 def arg(name, default=None):
     return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else default
-
-def size_of(path):
-    w, h = subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                                    "stream=width,height", "-of", "csv=p=0", path]).decode().split(",")[:2]
-    return int(w), int(h)
 
 def cmd_cut(src, keeps_json, out):
     keeps = [tuple(k) for k in json.load(open(keeps_json))]
@@ -59,7 +54,7 @@ def cmd_voice(base, out):
 
 def cmd_caption(base, transcript, out):
     vertical = "--vertical" in sys.argv
-    w, h = (1080, 1920) if vertical else size_of(base)
+    w, h = (1080, 1920) if vertical else probe_size(base)
     w, h = w - w % 2, h - h % 2
     y = float(arg("--y", 0.72 if h > w else 0.84)) * h
     scale = min(w, h) / 1080                     # caption art is designed for a 1080-wide short
@@ -70,35 +65,30 @@ def cmd_caption(base, transcript, out):
     pill = "--pill" in sys.argv
     face = arg("--font", "helvetica")
 
+    @functools.lru_cache(maxsize=None)
+    def art(text, em):
+        im = caption_img(text, pill, em, face)
+        if abs(scale - 1) > 0.02:
+            im = im.resize((int(im.width * scale), int(im.height * scale)), Image.LANCZOS)
+        return im
+
     def frame(img, t):
-        canvas = img.convert("RGBA")
         cur = next((c for c in spans if c["s"] <= t < c["e"]), None)
-        if cur:
-            im = caption_img(cur["text"], pill, cur["em"], face)
-            if abs(scale - 1) > 0.02:
-                im = im.resize((int(im.width * scale), int(im.height * scale)), Image.LANCZOS)
-            paste(canvas, im, w / 2 - im.width / 2, y - im.height / 2)
+        if not cur: return img
+        canvas, im = img.convert("RGBA"), art(cur["text"], cur["em"])
+        paste(canvas, im, w / 2 - im.width / 2, y - im.height / 2)
         return canvas.convert("RGB")
 
-    reader = Reader(base, w, h, 0, fill=True)    # fill=True center-crops when --vertical
     if "--preview" in sys.argv:
         os.makedirs("previews", exist_ok=True)
-        want = {int(round(float(x) * FPS)) for x in arg("--preview").split(",")}
-        for i in range(max(want) + 1):
-            img = reader.next()
-            if i in want: frame(img, i / FPS).save(f"previews/c_{i / FPS:06.2f}.jpg", quality=85)
+        for x in arg("--preview").split(","):
+            i = int(round(float(x) * FPS))
+            reader = Reader(base, w, h, i / FPS, fill=True)
+            frame(reader.next(), i / FPS).save(f"previews/c_{i / FPS:06.2f}.jpg", quality=85)
+            reader.close()
         print("stills in previews/"); return
-    audio = arg("--audio", base)
-    enc = subprocess.Popen(["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}",
-                            "-r", str(FPS), "-i", "-", "-i", audio, "-map", "0:v", "-map", "1:a", "-c:a", "aac",
-                            "-b:a", "256k", "-shortest", "-c:v", "libx264", "-preset", "medium", "-crf", "17",
-                            "-pix_fmt", "yuv420p", "-movflags", "+faststart", out], stdin=subprocess.PIPE)
-    n = int(probe_duration(base) * FPS)
-    for i in range(n):
-        enc.stdin.write(frame(reader.next(), i / FPS).tobytes())
-        if i % 600 == 0: print(f"frame {i}/{n}", flush=True)
-    enc.stdin.close(); enc.wait(); reader.close()
-    print("done", out)
+    parallel.render(out, int(probe_duration(base) * FPS), lambda i, reader: frame(reader.next(), i / FPS),
+                    lambda t0: Reader(base, w, h, t0, fill=True), audio=arg("--audio", base), size=(w, h))
 
 if __name__ == "__main__":
     c, a = sys.argv[1], [x for x in sys.argv[2:] if not x.startswith("--")]

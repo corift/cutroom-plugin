@@ -13,6 +13,7 @@ import json, os, re, subprocess, tempfile, wave
 import numpy as np
 
 from . import account
+from .core import mezzanine, probe_size
 
 HOP = 0.01          # envelope resolution (s)
 MAX_PAUSE = 0.25    # trim pauses longer than this (was 0.50: left 0.3-0.5 s of dead air at most joins)
@@ -165,15 +166,28 @@ def report(segs):
     return "\n".join(lines)
 
 # ------------------------------------------------------------------ assembly
+MAX_INPUTS = 8
+SKIP_GAP = 2.0
+
+def _runs(segs):
+    """Group segments into runs read from one seeked input each, splitting at the widest cut-away gaps, so the
+    footage between keeps is skipped instead of decoded. At most MAX_INPUTS runs keeps memory flat on long takes."""
+    gaps = sorted(((segs[i][0] - segs[i - 1][1], i) for i in range(1, len(segs))), reverse=True)
+    starts = sorted([0] + [i for g, i in gaps[:MAX_INPUTS - 1] if g >= SKIP_GAP])
+    return [segs[i0:i1] for i0, i1 in zip(starts, starts[1:] + [len(segs)])]
+
 def build(src, segs, out, fps=30, polish=True, speed=1.0):
     """Trim/concat with 12 ms audio fades at every join; writes out + segments.json next to it.
     speed > 1 speeds the whole cut up (setpts + atempo); segments.json out_start is in sped-up time."""
-    parts, labels = [], []
-    for i, (s, e) in enumerate(segs):
-        d = e - s; f = min(0.012, d / 4)
-        parts.append(f"[0:v]trim={s}:{e},setpts=PTS-STARTPTS,fps={fps}[v{i}]")
-        parts.append(f"[0:a]atrim={s}:{e},asetpts=PTS-STARTPTS,afade=t=in:d={f},afade=t=out:st={d - f:.4f}:d={f}[a{i}]")
-        labels.append(f"[v{i}][a{i}]")
+    parts, labels, inputs, i = [], [], [], 0
+    for k, run in enumerate(_runs(segs)):
+        t0 = run[0][0]
+        inputs += ["-ss", str(t0), "-t", str(run[-1][1] - t0 + 0.5), "-i", src]
+        for s, e in run:
+            d = e - s; f = min(0.012, d / 4)
+            parts.append(f"[{k}:v]trim={s - t0}:{e - t0},setpts=PTS-STARTPTS,fps={fps}[v{i}]")
+            parts.append(f"[{k}:a]atrim={s - t0}:{e - t0},asetpts=PTS-STARTPTS,afade=t=in:d={f},afade=t=out:st={d - f:.4f}:d={f}[a{i}]")
+            labels.append(f"[v{i}][a{i}]"); i += 1
     vout = "[vc]" if speed != 1.0 else "[v]"
     parts.append("".join(labels) + f"concat=n={len(segs)}:v=1:a=1{vout}[araw]")
     if speed != 1.0:
@@ -183,9 +197,8 @@ def build(src, segs, out, fps=30, polish=True, speed=1.0):
              "loudnorm=I=-16:TP=-1.5:LRA=9,aresample=48000") if polish else "aresample=48000"
     chain += ",aformat=channel_layouts=stereo"  # ffmpeg 5.x (cloud editor) can't pick a layout after loudnorm
     parts.append(f"[araw]{'atempo=%s,' % speed if speed != 1.0 else ''}{chain}[a]")
-    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", src, "-filter_complex", ";".join(parts),
-                    "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "fast", "-crf", "14",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le" if out.endswith(".mov") else "aac",
+    subprocess.run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", ";".join(parts),
+                    "-map", "[v]", "-map", "[a]", *mezzanine(probe_size(src)), "-c:a", "pcm_s16le" if out.endswith(".mov") else "aac",
                     "-b:a", "256k", out], check=True)
     t, meta = 0.0, []
     for s, e in segs:

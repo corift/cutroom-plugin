@@ -20,7 +20,7 @@ from functools import lru_cache
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 from . import brand
-from .core import W, H, FPS, font, serif, SFD, SFT, MONO, clamp, expo, cubic, inout, text_img, wrap, logo
+from .core import W, H, FPS, font, serif, SFD, SFT, MONO, clamp, expo, cubic, inout, text_img, wrap, logo, dilate
 
 SERIF_IT = brand.font("serif_italic", "/System/Library/Fonts/NewYorkItalic.ttf")
 HAND = "/System/Library/Fonts/Noteworthy.ttc"           # index 1 = Bold
@@ -63,7 +63,7 @@ def ss(fn, w, h, scale=2):
 def drop_shadow(img, blur=18, alpha=110, grow=0):
     blur = max(1, int(blur)); alpha = int(alpha)
     a = img.split()[3]
-    if grow: a = a.filter(ImageFilter.MaxFilter(grow * 2 + 1))
+    if grow: a = dilate(a, grow)
     pad = blur * 3
     sh = Image.new("RGBA", (img.width + pad * 2, img.height + pad * 2), (0, 0, 0, 0))
     m = Image.new("L", sh.size, 0); m.paste(a, (pad, pad))
@@ -251,14 +251,18 @@ def glow_chart(canvas, k, pts, labels=None, box=(110, 300, 970, 900), color=RED,
         fa = np.minimum(np.asarray(fl.split()[3]), np.asarray(m)); fl.putalpha(Image.fromarray(fa))
         canvas.alpha_composite(fl)
     if len(part) > 1:
-        glow = Image.new("RGBA", (W, H), (0, 0, 0, 0)); gd = ImageDraw.Draw(glow)
-        gd.line(part, fill=color + (255,), width=18, joint="curve")
+        m = 64
+        bx, by = max(0, int(min(x for x, _ in part)) - m), max(0, int(min(y for _, y in part)) - m)
+        bw, bh = min(W, int(max(x for x, _ in part)) + m + 1) - bx, min(H, int(max(y for _, y in part)) + m + 1) - by
+        local = [(x - bx, y - by) for x, y in part]
+        glow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0)); gd = ImageDraw.Draw(glow)
+        gd.line(local, fill=color + (255,), width=18, joint="curve")
         glow = glow.filter(ImageFilter.GaussianBlur(16))
-        canvas.alpha_composite(glow); canvas.alpha_composite(glow)
-        line = ss(lambda dd, s: dd.line([(x * s, y * s) for x, y in part], fill=color + (255,), width=7 * s, joint="curve"), W, H)
-        canvas.alpha_composite(line)
-        core = ss(lambda dd, s: dd.line([(x * s, y * s) for x, y in part], fill=(255, 235, 235, 200), width=2 * s, joint="curve"), W, H)
-        canvas.alpha_composite(core)
+        canvas.alpha_composite(glow, (bx, by)); canvas.alpha_composite(glow, (bx, by))
+        line = ss(lambda dd, s: dd.line([(x * s, y * s) for x, y in local], fill=color + (255,), width=7 * s, joint="curve"), bw, bh)
+        canvas.alpha_composite(line, (bx, by))
+        core = ss(lambda dd, s: dd.line([(x * s, y * s) for x, y in local], fill=(255, 235, 235, 200), width=2 * s, joint="curve"), bw, bh)
+        canvas.alpha_composite(core, (bx, by))
     canvas.alpha_composite(lay)
     # points light up when the line reaches them
     seg = 24

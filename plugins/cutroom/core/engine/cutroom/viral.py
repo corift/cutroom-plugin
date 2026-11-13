@@ -17,7 +17,7 @@ import math, os
 from functools import lru_cache
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageChops
-from .core import W, H, FPS, font, display, MONO, clamp, expo, cubic, inout, text_img, Reader
+from .core import W, H, FPS, font, display, MONO, clamp, expo, cubic, inout, text_img, Reader, dilate
 from .blocks import back, sit, emoji_img, drop_shadow, place, ss
 
 HEAVY = 800
@@ -116,14 +116,20 @@ class Timeline:
 class JumpReader:
     """Frames of a source read through a Timeline: skips forward over the cut pauses."""
 
+    REOPEN = 45
+
     def __init__(self, path, tl, t0, w=W, h=H):
-        self.tl = tl
-        s = tl.src(t0)
-        self.r = Reader(path, w, h, start=s)
-        self.i = round(s * FPS) - 1
+        self.tl, self.path, self.w, self.h = tl, path, w, h
+        first = round(tl.src(t0) * FPS)
+        self.r = Reader(path, w, h, start=first / FPS)
+        self.i = first - 1
 
     def at(self, t):
         target = round(self.tl.src(t) * FPS)
+        if target - self.i > self.REOPEN:
+            self.r.close()
+            self.r = Reader(self.path, self.w, self.h, start=target / FPS)
+            self.i = target - 1
         while self.i < target:
             self.r.next()
             self.i += 1
@@ -143,6 +149,11 @@ def shot(frame, z=1.0, fy=0.34, dx=0.0, dy=0.0, out=(W, H)):
     cw, ch = ow / s, oh / s
     x0 = clamp((iw - cw) / 2 - dx / s, 0, iw - cw)
     y0 = clamp((ih - ch) * fy - dy / s, 0, ih - ch)
+    box = (x0, y0, x0 + cw, y0 + ch)
+    if frame.mode == "L":
+        return frame.resize((ow, oh), Image.BICUBIC, box=box)
+    if (iw, ih) == (ow, oh) and (cw, ch) == (iw, ih):
+        return frame.convert("RGBA")
     return frame.convert("RGB").resize((ow, oh), Image.BICUBIC, box=(x0, y0, x0 + cw, y0 + ch)).convert("RGBA")
 
 
@@ -963,8 +974,7 @@ def screen(frame, k, box=None, box_k=None, zoom_k=None):
 
 def outline(mask, r=10, size=(W, H)):
     """the person's matte grown by r px (at 540 wide) for a white sticker edge."""
-    m = mask.convert("L")
-    return m.filter(ImageFilter.MaxFilter(2 * r + 1)).filter(ImageFilter.GaussianBlur(1.2)).resize(size, Image.BICUBIC)
+    return dilate(mask, r).filter(ImageFilter.GaussianBlur(1.2)).resize(size, Image.BICUBIC)
 
 
 def swap(canvas, mask, k, bg=(255, 98, 20), tiles=None, edge=WHITE):

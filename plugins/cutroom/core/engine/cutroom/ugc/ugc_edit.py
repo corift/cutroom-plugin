@@ -16,11 +16,13 @@ B-roll onto a basic-video-edit base cut, review the timing, and finish with an e
   finish    captioned.mp4 endcard.mp4 out.mp4    concat, web-ready, warns if over 30MB
 """
 import argparse, json, math, os, re, struct, subprocess, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+from cutroom.core import mezzanine
 
 W, H, FPS = 1080, 1920, 30
 WHISPER_MODEL = os.path.expanduser("~/Library/Application Support/superwhisper/ggml-small.en.bin")
 FILLER_PROMPT = "Um, so, uh, I like, uh, used it. Hmm, uh, yeah."
-ENC = ["-c:v", "libx264", "-preset", "fast", "-crf", "16", "-pix_fmt", "yuv420p"]
+ENC = mezzanine()
 AUD = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
 CAP_HOLD = 0.35  # basic-video-edit keeps a caption up this long after its last word
 norm = lambda w: re.sub(r"\W", "", w).lower()
@@ -173,7 +175,7 @@ def breath(a):
          (f"[a0][tn]amix=inputs=2:normalize=0:duration=first[a1];" if tone else "[a0]anull[a1];") +
          f"[0:a]atrim=start={t},asetpts=PTS-STARTPTS,afade=t=in:d=0.02[a2];"
          "[v1][a1][v2][a2]concat=n=2:v=1:a=1[v][a]",
-         "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-crf", "14", "-preset", "medium", *AUD, a.out])
+         "-map", "[v]", "-map", "[a]", *ENC, *AUD, a.out])
     if q is None:
         print("  no room tone found before the pause: it is digital silence, so check it by ear")
     src = os.path.splitext(a.video)[0] + "_transcript.json"
@@ -238,7 +240,7 @@ def sway(a):
     # 4% overscan, two slow sines per axis, so it reads as a hand holding the phone, not a wobble.
     run(["ffmpeg", "-v", "error", "-y", "-i", a.video, "-vf",
          "scale=1124:1998,crop=1080:1920:x='22+12*sin(t*0.83)+5*sin(t*2.1+1)':y='39+14*sin(t*0.61+2)+5*sin(t*1.7)'",
-         "-c:v", "libx264", "-crf", "14", "-preset", "medium", "-c:a", "copy", f"{stem}-sway.mp4"])
+         *ENC, "-c:a", "copy", f"{stem}-sway.mp4"])
     if os.path.exists(f"{stem}_transcript.json"):
         open(f"{stem}-sway_transcript.json", "w").write(open(f"{stem}_transcript.json").read())
     print(f"{stem}-sway.mp4")
@@ -388,7 +390,7 @@ def review(a):
 def endcard(a):
     run(["ffmpeg", "-v", "error", "-y", "-loop", "1", "-t", str(a.dur), "-i", a.image, "-f", "lavfi",
          "-i", "anullsrc=r=48000:cl=stereo", "-vf", f"scale={W}:{H},setsar=1,fps={FPS},format=yuv420p",
-         "-shortest", "-c:v", "libx264", "-preset", "fast", "-crf", "17", *AUD, a.out])
+         "-shortest", *ENC, *AUD, a.out])
     print(a.out)
 
 
@@ -396,7 +398,7 @@ def finish(a):
     lst = os.path.splitext(a.out)[0] + "_concat.txt"
     open(lst, "w").write(f"file '{os.path.abspath(a.video)}'\nfile '{os.path.abspath(a.card)}'\n")
     run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", lst, "-c:v", "libx264",
-         "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", *AUD, "-movflags", "+faststart", a.out])
+         "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p", *AUD, "-movflags", "+faststart", a.out])
     os.remove(lst)
     mb = os.path.getsize(a.out) / 1e6
     print(f"{a.out}: {duration(a.out):.2f}s, {mb:.1f}MB" + ("  (over 30MB: raise -crf to send it)" if mb > 30 else ""))

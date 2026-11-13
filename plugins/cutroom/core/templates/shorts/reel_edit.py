@@ -346,7 +346,8 @@ class Reel:
         z = self.zoom(t)
         dx, dy = self.shake(t)
         cv = V.shot(fr, z, self.fy, dx, dy)
-        mshot = V.shot(mk, z, self.fy, dx * mk.width / W, dy * mk.width / W) if mk is not None else None
+        masked = mk is not None and self.active(t, "spotlight", "orbit", "swap", "refs", "behind", "count", "comment")
+        mshot = V.shot(mk.convert("L"), z, self.fy, dx * mk.width / W, dy * mk.width / W) if masked else None
         for m in self.active(t, "blur"):
             V.blur_band(cv, m.get("y", 1250), m.get("h", 300))
         for m in self.active(t, "spotlight"):

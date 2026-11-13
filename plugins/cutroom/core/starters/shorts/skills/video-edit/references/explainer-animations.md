@@ -53,5 +53,5 @@ Code: the reusable primitives are in `$CUTROOM_CORE/engine/cutroom/explainer.py`
 - Use logos in their white version on dark (e.g. `openai.png`); a `-light` variant is the black mark for light backgrounds. Logos live in `$CUTROOM_ACCOUNT/logos/`.
 - Status chips on rooms: put them on the room's top border (y0 − 20), right-aligned, so they don't cover the room's label.
 - Vertical (9:16) source clips with burnt-in captions: crop the 1080×960 band above the captions (`cover(..., cy≈0.36)`). Pick a source time where nobody walks in front of the camera (check the contact sheet).
-- Render time: ~70s for 95s with the parallel renderer (`cutroom.parallel`). Preview stills seek directly (~0.4s each).
+- Render time: well under the video's length with the parallel renderer (`cutroom.parallel`). Preview stills seek directly (~0.4s each).
 - Deliver only the 1080p render, even when it's over a phone-send size limit; no second low-res copy.

@@ -3,7 +3,8 @@
 Everything renders with Pillow onto a 1080x1920 RGBA canvas; frames are read from and
 written to ffmpeg over raw pipes. No libass/drawtext needed.
 """
-import io, os, subprocess
+import io, os, subprocess, sys
+import numpy as np
 from . import brand as _brand
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
@@ -158,6 +159,18 @@ def rounded(img, r):
     ImageDraw.Draw(m).rounded_rectangle((0, 0, img.width - 1, img.height - 1), r, fill=255)
     out = img.convert("RGBA"); out.putalpha(m); return out
 
+def dilate(mask, r):
+    """L mask grown by r px, the same result as ImageFilter.MaxFilter(2 * r + 1) at a fraction of the time."""
+    a = np.asarray(mask.convert("L"))
+    for axis in (0, 1):
+        p = np.pad(a, [(r, r) if i == axis else (0, 0) for i in (0, 1)])
+        n = a.shape[axis]
+        grown = np.zeros_like(a)
+        for k in range(2 * r + 1):
+            np.maximum(grown, p[k:k + n] if axis == 0 else p[:, k:k + n], out=grown)
+        a = grown
+    return Image.fromarray(a)
+
 def vgrad(w, h, a0, a1, col=(0, 0, 0), power=1.4):
     """Vertical alpha gradient strip from alpha a0 (top) to a1 (bottom)."""
     g = Image.new("RGBA", (w, h), (0, 0, 0, 0)); d = ImageDraw.Draw(g)
@@ -175,26 +188,63 @@ class Reader:
     def __init__(self, path, w=W, h=H, start=0.0, fill=True, precrop="", fps=FPS):
         vf = precrop + (f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}" if fill else f"scale={w}:{h}")
         self.w, self.h, self.last = w, h, None
-        self.p = subprocess.Popen(["ffmpeg", "-v", "quiet", "-ss", str(start), "-i", path, "-vf", f"fps={fps},{vf}",
-                                   "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
+        self.p = subprocess.Popen(["ffmpeg", "-v", "quiet", "-threads", "2", "-ss", str(max(0.0, start - 0.5 / fps)), "-copyts", "-i", path,
+                                   "-vf", f"fps={fps}:start_time={start},{vf}",
+                                   "-threads", "2", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
     def next(self):
         buf = self.p.stdout.read(self.w * self.h * 3)
         if len(buf) == self.w * self.h * 3:
             self.last = Image.frombuffer("RGB", (self.w, self.h), buf, "raw", "RGB", 0, 1)
         return self.last
-    def close(self): self.p.kill()
+    def close(self): self.p.kill(); self.p.wait()
 
 def probe_duration(path):
     return float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                                           "-of", "csv=p=0", path]).decode())
 
+BITRATE = "10M"
+_hardware = None
+
+def hardware_encoder():
+    """True when ffmpeg can encode H.264 on this Mac's media engine. CUTROOM_ENCODER=x264 turns it off."""
+    global _hardware
+    if _hardware is None:
+        _hardware = False
+        if sys.platform == "darwin" and os.environ.get("CUTROOM_ENCODER", "") != "x264":
+            _hardware = subprocess.run(["ffmpeg", "-v", "quiet", "-f", "lavfi", "-i", f"color=black:s={W}x{H}:r={FPS}",
+                                        "-frames:v", "2", "-c:v", "h264_videotoolbox", "-allow_sw", "0", "-f", "null", "-"]).returncode == 0
+    return _hardware
+
+def probe_size(path):
+    w, h = subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                    "stream=width,height", "-of", "csv=p=0", path]).decode().split(",")[:2]
+    return int(w), int(h)
+
+def bitrate(size=(W, H), scale=1.0):
+    """BITRATE scaled to the frame's pixel count, so a 4K landscape video gets the same quality as a 1080x1920 short."""
+    return max(2, round(int(BITRATE[:-1]) * scale * size[0] * size[1] / (W * H)))
+
+def h264(threads=None, size=(W, H)):
+    """ffmpeg arguments for an upload-ready H.264 stream: the hardware encoder on a Mac, x264 anywhere else."""
+    rate = bitrate(size)
+    if hardware_encoder():
+        return ["-c:v", "h264_videotoolbox", "-allow_sw", "0", "-profile:v", "high", "-g", str(FPS * 2), "-b:v", f"{rate}M", "-pix_fmt", "yuv420p"]
+    return (["-c:v", "libx264", "-preset", "veryfast", "-profile:v", "high", "-b:v", f"{rate}M", "-maxrate", f"{rate}M", "-bufsize", f"{rate * 2}M",
+             "-pix_fmt", "yuv420p"] + (["-threads", str(threads)] if threads else []))
+
+def mezzanine(size=(W, H)):
+    """ffmpeg arguments for a working file a later step renders from (a cut base, a retimed clip): near-lossless,
+    a keyframe every second so chunk readers seek cheaply, and fast to write."""
+    if hardware_encoder():
+        return ["-c:v", "h264_videotoolbox", "-allow_sw", "0", "-profile:v", "high", "-g", str(FPS), "-b:v", f"{bitrate(size, 2.5)}M", "-pix_fmt", "yuv420p"]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-g", str(FPS), "-pix_fmt", "yuv420p"]
+
 class Encoder:
-    def __init__(self, out, audio=None, crf=16, fps=FPS):
-        cmd = ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
+    def __init__(self, out, audio=None, crf=16, fps=FPS, size=(W, H)):
+        cmd = ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{size[0]}x{size[1]}",
                "-r", str(fps), "-i", "-"]
         if audio: cmd += ["-i", audio, "-map", "0:v", "-map", "1:a", "-c:a", "aac", "-b:a", "256k", "-shortest"]
-        cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", str(crf), "-pix_fmt", "yuv420p",
-                "-movflags", "+faststart", out]
+        cmd += h264(size=size) + ["-movflags", "+faststart", out]
         self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
     def write(self, img): self.p.stdin.write(img.convert("RGB").tobytes())
     def close(self): self.p.stdin.close(); self.p.wait()

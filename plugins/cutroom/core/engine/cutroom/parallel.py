@@ -1,7 +1,8 @@
-"""Parallel render: split the frame range into chunks, render each chunk in its own forked process
-(own ffmpeg readers seeked to the chunk start, own x264 encoder), then stitch with concat -c copy
-and mux the audio. Pillow compositing is single-threaded, so this is where the speed-up comes from
-(~3 fps on one core -> roughly x cores).
+"""Parallel render: split the frame range into short chunks and render them on every core, each chunk
+in its own forked process (own ffmpeg readers seeked to the chunk start, own encoder), then stitch with
+concat -c copy and mux the audio. Pillow compositing is single-threaded, so this is where the speed-up
+comes from. Chunks are short and handed out as cores free up, so a heavy stretch of the edit never
+leaves the other cores idle. Encoding runs on the Mac's media engine when there is one (core.h264).
 
 Rules for a render script to be chunk-safe:
 - compose(t, ...) must depend only on t (no state carried from frame to frame). Module-level RNG is fine.
@@ -9,7 +10,9 @@ Rules for a render script to be chunk-safe:
   (see `clip_offset` for B-roll clips that start mid-timeline).
 """
 import multiprocessing as mp, os, shutil, subprocess, sys, tempfile, time
-from .core import FPS, W, H
+from .core import FPS, W, H, BITRATE, h264, hardware_encoder
+
+CHUNK_SECONDS = 2
 
 def clip_offset(t, a, lead=0.04, fps=FPS):
     """Source offset for a clip shown from `a` (reader opened at the first frame >= a - lead).
@@ -18,56 +21,61 @@ def clip_offset(t, a, lead=0.04, fps=FPS):
     first = -(-round((a - lead) * fps * 1e6) // 1_000_000) / fps   # ceil without float drift
     return max(0.0, t - first)
 
-BITRATE = "10M"   # plain IG/TikTok upload bitrate, 10,000 kbps. One file per version, no _mobile copy.
-
-def _encoder(path, crf, fps, threads):
-    cmd = ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
-           "-r", str(fps), "-i", "-", "-c:v", "libx264", "-preset", "medium", "-b:v", BITRATE,
-           "-maxrate", BITRATE, "-bufsize", "20M", "-pix_fmt", "yuv420p", "-threads", str(threads), path]
+def _encoder(path, fps, threads, size):
+    cmd = ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{size[0]}x{size[1]}",
+           "-r", str(fps), "-i", "-"] + h264(threads, size) + [path]
     return subprocess.Popen(cmd, stdin=subprocess.PIPE)
 
-def _worker(k, i0, i1, make_frame, open_sources, path, crf, fps, threads, done):
+def _worker(i0, i1, make_frame, open_sources, path, fps, threads, done, size):
     srcs = open_sources(i0 / fps)
-    enc = _encoder(path, crf, fps, threads)
+    enc = _encoder(path, fps, threads, size)
     for i in range(i0, i1):
         enc.stdin.write(make_frame(i, srcs).convert("RGB").tobytes())
         with done.get_lock(): done.value += 1
     enc.stdin.close(); enc.wait()
     for s in (srcs if isinstance(srcs, (list, tuple)) else [srcs]):
         if hasattr(s, "close"): s.close()
-    if enc.returncode: sys.exit(enc.returncode)
+    sys.stdout.flush()
+    os._exit(enc.returncode)
 
-def render(out, n, make_frame, open_sources, audio=None, workers=None, crf=16, fps=FPS):
+def _bounds(n, workers, fps):
+    size = max(1, min(int(CHUNK_SECONDS * fps), -(-n // workers)))
+    return [(i, min(n, i + size)) for i in range(0, n, size)]
+
+def render(out, n, make_frame, open_sources, audio=None, workers=None, crf=16, fps=FPS, size=(W, H)):
     """make_frame(i, srcs) -> PIL image for frame i.  open_sources(t0) -> readers seeked to t0
-    (a tuple of core.Reader is typical; anything with .close() is closed at the end)."""
-    workers = workers or max(1, (os.cpu_count() or 4) - 2)
-    workers = min(workers, n)
+    (a tuple of core.Reader is typical; anything with .close() is closed at the end).
+    size is the frame size make_frame returns; the bitrate scales with it."""
+    hardware = hardware_encoder()
+    cores = os.cpu_count() or 4
+    workers = min(workers or (cores if hardware else max(1, cores - 2)), n)
     ctx = mp.get_context("fork")
     tmp = tempfile.mkdtemp(prefix="cutroom_chunks_", dir=os.path.dirname(os.path.abspath(out)))
-    bounds = [n * k // workers for k in range(workers + 1)]
+    chunks = _bounds(n, workers, fps)
+    paths = [os.path.join(tmp, f"c{k:04d}.mp4") for k in range(len(chunks))]
     done, t_start = ctx.Value("i", 0), time.time()
-    procs = []
-    for k in range(workers):
-        p = ctx.Process(target=_worker, args=(k, bounds[k], bounds[k + 1], make_frame, open_sources,
-                                              os.path.join(tmp, f"c{k:03d}.mp4"), crf, fps, 2, done))
-        p.start(); procs.append(p)
-    last = 0
-    while any(p.is_alive() for p in procs):
-        time.sleep(1)
-        if time.time() - last >= 10:
+    waiting, running, failed, last = list(enumerate(chunks)), [], False, t_start
+    while (waiting and not failed) or running:
+        while waiting and not failed and len(running) < workers:
+            k, (i0, i1) = waiting.pop(0)
+            p = ctx.Process(target=_worker, args=(i0, i1, make_frame, open_sources, paths[k], fps, 2, done, size))
+            p.start(); running.append(p)
+        time.sleep(0.02)
+        for p in [p for p in running if not p.is_alive()]:
+            p.join(); running.remove(p)
+            failed = failed or p.exitcode != 0
+        if time.time() - last >= 5:
             last = time.time(); el = last - t_start; d = done.value
-            eta = (n - d) * el / d if d else 0
-            print(f"frame {d}/{n}  {d / el:.1f} fps  eta {eta:.0f}s", flush=True)
-    for p in procs: p.join()
-    if any(p.exitcode for p in procs):
+            print(f"frame {d}/{n}  {d / el:.1f} fps  eta {(n - d) * el / d if d else 0:.0f}s", flush=True)
+    if failed:
         raise RuntimeError(f"chunk worker failed; chunks kept in {tmp}")
     lst = os.path.join(tmp, "list.txt")
     with open(lst, "w") as f:
-        for k in range(workers): f.write(f"file 'c{k:03d}.mp4'\n")
+        for path in paths: f.write(f"file '{os.path.basename(path)}'\n")
     cmd = ["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", lst]
     if audio: cmd += ["-i", audio, "-map", "0:v", "-map", "1:a", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-shortest"]
     cmd += ["-c:v", "copy", "-movflags", "+faststart", out]
     subprocess.run(cmd, check=True)
     shutil.rmtree(tmp)
     el = time.time() - t_start
-    print(f"done {out}  {n} frames in {el:.0f}s ({n / el:.1f} fps, {workers} workers)", flush=True)
+    print(f"done {out}  {n} frames in {el:.1f}s ({n / el:.1f} fps, {workers} workers, {'hardware' if hardware else 'x264'} encoder)", flush=True)

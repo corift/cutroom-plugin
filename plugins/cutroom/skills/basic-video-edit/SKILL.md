@@ -33,6 +33,7 @@ Everything runs through `$CUTROOM_CORE/skills/basic-video-edit/scripts/basic_edi
 6. **Preview the captions:** `basic_edit.py caption base.mp4 base_transcript.json out.mp4 --preview 2,10,25,40 [--vertical]`. Then look at the stills.
    - **Gate:** the caption never covers a mouth, face or on-screen text, and it is readable at phone size. If it isn't, adjust `--y`, or add `--pill` over busy or bright footage.
 7. **Render:** the same command without `--preview`. Deliver **one** video file: no separate preview copy.
+   - It renders on every core through `cutroom.parallel.render` at the source's size, a few seconds per minute of video. If you write your own render script for a video, render through `parallel.render(..., size=(w, h))` and take encoder settings from `core.h264()` or `core.mezzanine()`; don't hand-roll a single-process ffmpeg encode.
 8. **Deliver:** in a Cutroom project, publish it for review (`node "$CUTROOM_CORE/bin/cutroom.mjs" publish render "videos/<name>" edit/<file>.mp4`); otherwise send the video. Add a few stills and a short list of what was cut and why, and ask for timestamped feedback.
 
 ## Caption rules
