@@ -1,4 +1,7 @@
-"""Captions. Two house styles, both hard-swap (no bounce, no per-word pop):
+"""Captions. House styles, all hard-swap (no bounce, no per-word pop):
+
+  "plain" (default since 2026-11-12): the kallaway text, pure white with the soft drop shadow,
+             and nothing else: no pill on seams, no italic serif swap on key phrases.
 
   "kallaway" (default since v4): Helvetica Neue Bold 68, tracking -0.045em, soft drop shadow,
              pure white, sentence case as spoken (matched against a kallaway frame),
@@ -35,6 +38,7 @@ WORD_STYLES = ("pop", "box")
 MARKER = brand.color("marker", (255, 214, 92))
 ACCENT = brand.color("accent", (214, 34, 34))
 BLACK = (0, 0, 0)
+STYLES["plain"] = STYLES["kallaway"]
 GAP_BREAK = 0.30     # a pause this long always starts a new chunk
 HOLD = 0.35          # linger after the last word when followed by silence
 
@@ -189,6 +193,10 @@ def draw(canvas, t, spans, mode, style="kallaway", hidden=False):
     if style == "subtitle":
         im = subtitle_img(cur["text"])
         paste(canvas, im, W / 2 - im.width / 2, y - im.height / 2)
+        return
+    if style == "plain":
+        im = caption_img(cur["text"], "kallaway", pill=False, em=False)
+        paste(canvas, im, W / 2 - im.width / 2, STYLES[style]["y"][mode] - im.height / 2)
         return
     pill = mode in ("stack", "split") if style == "kallaway" else mode != "face"
     im = caption_img(cur["text"], style, pill=pill, em=cur["em"])

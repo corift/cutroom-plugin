@@ -117,13 +117,22 @@
       "use": "calmer, longer talking videos"
     },
     {
+      "id": "plain",
+      "name": "Plain",
+      "kind": "captions",
+      "on": true,
+      "code": "captions.draw(style=\"plain\")",
+      "summary": "Big white words with a soft shadow, one or two at a time, centred. No box, no font swap.",
+      "use": "the default for talking reels"
+    },
+    {
       "id": "kallaway",
       "name": "Bold",
       "kind": "captions",
-      "on": true,
+      "on": false,
       "code": "captions.draw(style=\"kallaway\")",
       "summary": "Big white words, one or two at a time, centred. Key phrases switch to an italic serif.",
-      "use": "the default for talking reels"
+      "use": "talking reels with emphasis on key phrases"
     },
     {
       "id": "box",
