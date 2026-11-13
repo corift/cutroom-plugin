@@ -237,7 +237,7 @@ def mezzanine(size=(W, H)):
     a keyframe every second so chunk readers seek cheaply, and fast to write."""
     if hardware_encoder():
         return ["-c:v", "h264_videotoolbox", "-allow_sw", "0", "-profile:v", "high", "-g", str(FPS), "-b:v", f"{bitrate(size, 2.5)}M", "-pix_fmt", "yuv420p"]
-    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-g", str(FPS), "-pix_fmt", "yuv420p"]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-g", str(FPS), "-pix_fmt", "yuv420p"]
 
 class Encoder:
     def __init__(self, out, audio=None, crf=16, fps=FPS, size=(W, H)):

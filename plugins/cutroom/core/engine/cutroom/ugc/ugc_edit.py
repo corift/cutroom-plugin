@@ -16,6 +16,7 @@ B-roll onto a basic-video-edit base cut, review the timing, and finish with an e
   finish    captioned.mp4 endcard.mp4 out.mp4    concat, web-ready, warns if over 30MB
 """
 import argparse, json, math, os, re, struct, subprocess, sys
+from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 from cutroom.core import mezzanine
 
@@ -60,8 +61,7 @@ def duration(path):
 def prep(a):
     work = os.path.splitext(a.out)[0] + "_clips"
     os.makedirs(work, exist_ok=True)
-    parts = []
-    for clip in a.clips:
+    def one(clip):
         out = os.path.join(work, os.path.basename(clip))
         # AI clips (Omni) carry ~15ms more audio than video. Trim both to the
         # video length, or the extra adds up across joins and lips drift.
@@ -70,7 +70,9 @@ def prep(a):
         run(["ffmpeg", "-v", "error", "-y", "-i", clip, "-t", f"{vdur / a.speed:.4f}", "-vf",
              f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setpts=PTS/{a.speed},fps={FPS},setsar=1",
              "-af", f"atempo={a.speed},aresample=48000", *ENC, *AUD, out])
-        parts.append(out)
+        return out
+    with ThreadPoolExecutor(4) as pool:
+        parts = list(pool.map(one, a.clips))
     # Join with the concat filter, padding or trimming each part's audio to its
     # exact video length. The concat demuxer adds AAC padding at every join.
     vdurs = [float(run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",

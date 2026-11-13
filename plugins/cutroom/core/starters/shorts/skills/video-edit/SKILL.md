@@ -132,7 +132,7 @@ If the project has its own hook/script skills or instructions, use them. After f
    swiftc -O "$CUTROOM_CORE/engine/personmask.swift" -o <scratch>/personmask
    <scratch>/personmask base_vN.mp4 540 960 | ffmpeg -f rawvideo -pix_fmt gray -s 540x960 -r 30 -i - -c:v libx264 -crf 8 -pix_fmt yuv420p mask_vN.mp4
    ```
-   It uses Apple Vision (built into macOS); a 60s video takes about 2 minutes.
+   It uses Apple Vision (built into macOS) and runs at about real time: a 60s video takes about a minute. It is the slowest step of an edit, so start it in the background as soon as the base exists and carry on with the plan and sound while it runs.
    - **Cleaner matte / Linux:** `python3 "$CUTROOM_CORE/engine/personmask.py" base_vN.mp4 540 960 | ffmpeg …` (same pipe). Robust Video Matting: hair strands and steady edges, better than Vision. With `MATTE_URL` + `MATTE_TOKEN` set it runs on the GPU matte service (`$CUTROOM_CORE/engine/matte/modal_matte.py`, ~30s for a 60s reel); without them it falls back to onnxruntime on CPU (minutes; model at `PERSONMASK_MODEL`).
 7. **Build the picture** in the render script (`renderN.py`, from `$CUTROOM_CORE/templates/shorts/render_template.py`):
    - `TIMELINE = SB.timeline({beat_id: draw_fn})`, `OVERLAYS = SB.overlays({...})`; animation moments read `SB.cue(name)` (ticks, wipes, submits). **Never hand-type a time that also exists in the storyboard.**
