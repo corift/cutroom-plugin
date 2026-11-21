@@ -4,6 +4,7 @@
   python3 -m cutroom.autocut show VIDEO_DIR            the sentences with what is kept and cut, and the settings
   python3 -m cutroom.autocut set VIDEO_DIR '{"cut": [3], "keep": [5], "captions": {"style": "pop"}}'
   python3 -m cutroom.autocut render VIDEO_DIR          edit.json -> edit/cut_vN.mp4 (+ cut.script.md, storyboard.json)
+  python3 -m cutroom.autocut check VIDEO_DIR           listen back to the cut: every join, clipped or stray words, what was heard
   python3 -m cutroom.autocut plan VIDEO_DIR            edit.json -> edit/plan_vN.json: the same cut as data, for a device to render
   python3 -m cutroom.autocut status VIDEO_DIR          one JSON line: clips, what is ingested, renders, settings
   python3 -m cutroom.autocut sheet VIDEO_DIR [FILE] [FPS]   a contact sheet of FILE (default: the latest render, else the source) -> edit/sheet_*.jpg
@@ -14,6 +15,7 @@ VIDEO_DIR holds clips/ (the uploads, joined in name order or clips/order.json) a
 edit.json:
   cut        sentence ids left out          auto      ids the retake detector cut (a subset of cut)
   trims      [[s, e]] source seconds removed inside kept sentences (stumbles, restarts)
+  nudges     [{"edge": start|end, "at": source seconds, "by": seconds}] one cut edge moved: positive keeps more sound
   captions   {"style": plain|kallaway|pop|box|subtitle|rpn|none, "position": top|middle|bottom|null,
               "emphasis": ["key phrase"], "fixes": {"heard": "meant"}}
   format     vertical | source              pace      tight | natural
@@ -30,7 +32,7 @@ from .core import FPS, Reader, cover, display, font, mezzanine, probe_duration, 
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".webm", ".mkv")
 STYLES = ("plain", "kallaway", "pop", "box", "subtitle", "rpn", "none")
 POSITIONS = {"top": 0.2, "middle": 0.5, "bottom": 0.74}
-DEFAULTS = {"template": "clean", "cut": [], "auto": [], "trims": [], "format": "vertical", "pace": "tight", "zoom": "none", "hook": "",
+DEFAULTS = {"template": "clean", "cut": [], "auto": [], "trims": [], "nudges": [], "format": "vertical", "pace": "tight", "zoom": "none", "hook": "",
             "captions": {"style": "plain", "position": None, "emphasis": [], "fixes": {}}}
 TEMPLATES = {
     "clean": {"captions": "plain", "pace": "tight", "zoom": "none", "format": "vertical", "hook": False},
@@ -204,7 +206,7 @@ def ingest(video, first=None):
     auto = retakes(sentences)
     write(video, "hints.json", {str(k): v for k, v in auto.items()})
     previous = read(video, "edit.json", {})
-    edit = {**load_edit(video), "cut": sorted(auto), "auto": sorted(auto), "trims": restarts(res["words"])}
+    edit = {**load_edit(video), "cut": sorted(auto), "auto": sorted(auto), "trims": restarts(res["words"]), "nudges": []}
     for k in ("format", "pace", "zoom", "hook", "captions"):
         if k in previous: edit[k] = previous[k]
     write(video, "edit.json", edit)
@@ -288,6 +290,10 @@ def apply(video, patch):
     if "emphasis" in c: edit["captions"]["emphasis"] = [str(p) for p in c["emphasis"]]
     if "fixes" in c: edit["captions"]["fixes"] = {**edit["captions"]["fixes"], **c["fixes"]}
     if "trims" in patch: edit["trims"] = [[float(a), float(b)] for a, b in patch["trims"]]
+    for n in patch.get("nudges", []):
+        if n.get("edge") not in ("start", "end"): raise SystemExit("nudge edge is start or end")
+        edit["nudges"].append({"edge": n["edge"], "at": round(float(n["at"]), 3), "by": round(max(-0.4, min(0.4, float(n["by"]))), 3)})
+    if patch.get("clear_nudges"): edit["nudges"] = []
     write(video, "edit.json", edit)
     return edit
 
@@ -380,7 +386,80 @@ def segments_of(video, edit):
     keeps = keeps_of(sentences, words, edit)
     if not keeps: raise SystemExit("every sentence is cut: keep at least one")
     env, thresh = cp.speech_env(path(video, "source.mp4"))
-    return cp.trim_edges(cp.plan(keeps, env, thresh=thresh, **PACES[edit["pace"]]), env, thresh=thresh), words, sentences
+    segs = cp.trim_edges(cp.plan(keeps, env, thresh=thresh, **PACES[edit["pace"]]), env, thresh=thresh)
+    return nudged(segs, edit["nudges"]), words, sentences
+
+def nudged(segs, nudges):
+    """Move single cut edges: each nudge finds the edge within 0.3 s of `at` and keeps `by` more seconds of sound there."""
+    segs = [list(s) for s in segs]
+    for n in nudges:
+        col = 1 if n["edge"] == "end" else 0
+        if not segs: break
+        i = min(range(len(segs)), key=lambda k: abs(segs[k][col] - n["at"]))
+        if abs(segs[i][col] - n["at"]) > 0.3: continue
+        if col:
+            limit = segs[i + 1][0] if i + 1 < len(segs) else float("inf")
+            segs[i][1] = round(max(segs[i][0] + 0.1, min(segs[i][1] + n["by"], limit)), 3)
+        else:
+            limit = segs[i - 1][1] if i else 0.0
+            segs[i][0] = round(min(segs[i][1] - 0.1, max(segs[i][0] - n["by"], limit)), 3)
+    return [tuple(s) for s in segs]
+
+def _edge(word, at, edge, env, thresh):
+    """What a cut edge does to the word it touches: None, or (problem, nudge that fixes it)."""
+    mid = (word["start"] + word["end"]) / 2
+    said = word["word"].strip()
+    if edge == "end":
+        over = word["end"] - at
+        if over <= 0.03: return None
+        if mid < at: return f'"{said}" loses its last {over:.2f}s', round(over + 0.05, 2)
+        return f'{at - word["start"]:.2f}s of the cut word "{said}" is left in', round(-(at - word["start"]) - 0.03, 2)
+    over = at - word["start"]
+    if over <= 0.03: return None
+    if mid > at: return f'"{said}" loses its first {over:.2f}s', round(over + 0.04, 2)
+    return f'{word["end"] - at:.2f}s of the cut word "{said}" is left in', round(-(word["end"] - at) - 0.03, 2)
+
+def check(video):
+    """Listen back to the cut before rendering: each join with the words either side, edges that clip a kept word or
+    leave part of a cut one (from the word timings), and what a fresh transcript of the cut audio hears."""
+    edit = load_edit(video)
+    segs, words, _ = segments_of(video, edit)
+    src = path(video, "source.mp4")
+    env, thresh = cp.speech_env(src)
+    spoken = lambda ws: " ".join(w["word"].strip() for w in ws)
+    lines, flags, kept, t = [], 0, [], 0.0
+    for i, (a, b) in enumerate(segs):
+        touching = [w for w in words if w["end"] > a and w["start"] < b]
+        inside = [w for w in touching if a <= (w["start"] + w["end"]) / 2 <= b]
+        kept += inside
+        notes = []
+        for edge, at, word in (("start", a, touching[:1]), ("end", b, touching[-1:])):
+            found = word and _edge(word[0], at, edge, env, thresh)
+            if found:
+                flags += 1
+                notes.append(f'    ! {found[0]}. Fix: {{"edge": "{edge}", "at": {at}, "by": {found[1]}}}')
+        lines.append(f'{i + 1:2d}. {_clock(t)}  src {a:.2f}-{b:.2f}  "{spoken(inside[:4])} ... {spoken(inside[-4:])}"')
+        lines += notes
+        t += b - a
+    heard = path(video, "check.m4a")
+    pick = "+".join(f"between(t,{a},{b})" for a, b in segs)
+    try:
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", src, "-vn", "-af", f"aselect='{pick}',asetpts=N/SR/TB",
+                        "-ac", "1", "-ar", "16000", heard], check=True)
+        got = cp.transcribe(heard, path(video, "check.json"))["words"]
+        want, have = [_norm(w["word"]) for w in kept], [_norm(w["word"]) for w in got]
+        diffs = []
+        for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, want, have, autojunk=False).get_opcodes():
+            if op == "equal": continue
+            near = spoken(kept[max(0, i1 - 2):i1])
+            diffs.append(f'    after "{near}": meant "{spoken(kept[i1:i2])}", heard "{spoken(got[j1:j2])}"')
+        listened = ["Heard back the same words as the plan."] if not diffs else [
+            "Listening back heard these differently (a missing or half word next to a join is a clipped cut; a spelling change is not):", *diffs[:20]]
+    except Exception as error:
+        listened = [f"Could not listen back: {error}"]
+    head = f"{len(segs)} pieces, {flags} edge(s) flagged." + (" Send each Fix in change_edit nudges, then check again." if flags else "")
+    return "\n".join([head, *lines, *listened])
+
 
 def plan(video):
     """The cut render() would make, as data: edit/plan_vN.json for a device that renders from its own copy of the clips."""
@@ -541,6 +620,7 @@ def main(argv):
         apply(video, json.loads(argv[2])); print(show(video))
     elif cmd == "render": print(json.dumps(render(video)))
     elif cmd == "plan": print(json.dumps(plan(video)))
+    elif cmd == "check": print(check(video))
     elif cmd == "sheet": print(json.dumps(sheet(video, *[a for a in argv[2:4] if a])))
     elif cmd == "adopt": print(json.dumps(adopt(video, argv[2])))
     elif cmd == "reference": print(json.dumps(reference(video, argv[2])))
