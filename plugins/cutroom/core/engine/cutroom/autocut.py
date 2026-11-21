@@ -8,6 +8,7 @@
   python3 -m cutroom.autocut status VIDEO_DIR          one JSON line: clips, what is ingested, renders, settings
   python3 -m cutroom.autocut sheet VIDEO_DIR [FILE] [FPS]   a contact sheet of FILE (default: the latest render, else the source) -> edit/sheet_*.jpg
   python3 -m cutroom.autocut adopt VIDEO_DIR FILE      a video made outside render becomes the next edit/cut_vN.mp4
+  python3 -m cutroom.autocut reference VIDEO_DIR NAME  clips/NAME is a video to imitate, not footage: left out of the edit, measured (shots, pace, shape) and laid out as edit/sheet_*.jpg
 
 VIDEO_DIR holds clips/ (the uploads, joined in name order or clips/order.json) and edit/ (everything made here).
 edit.json:
@@ -71,8 +72,15 @@ def clips(video):
         with open(os.path.join(folder, "order.json")) as f: order = json.load(f)
     except (OSError, ValueError):
         order = []
+    held = references(video)
     ranked = [n for n in order if n in names] + [n for n in names if n not in order]
-    return [os.path.join(folder, n) for n in ranked]
+    return [os.path.join(folder, n) for n in ranked if n not in held]
+
+def references(video):
+    try:
+        with open(os.path.join(video, "clips", "references.json")) as f: return json.load(f)
+    except (OSError, ValueError):
+        return []
 
 # ------------------------------------------------------------------ ingest
 def _has_audio(media):
@@ -466,6 +474,7 @@ def sheet(video, media=None, fps=None):
     latest = status(video)["latest"]
     media = media or path(video, latest or "source.mp4")
     if not os.path.exists(media): raise SystemExit(f"no such file: {media}")
+    os.makedirs(edit_dir(video), exist_ok=True)
     total = probe_duration(media)
     cols, rows = 6, 4
     step = 1 / float(fps) if fps else max(total / (cols * rows), 0.25)
@@ -496,6 +505,31 @@ def adopt(video, media):
     return {"file": f"edit/cut_v{n}.mp4", "version": n, "duration": round(probe_duration(out), 1),
             "footage": round(probe_duration(src), 1) if os.path.exists(src) else 0, "cuts": 0}
 
+def shots(media):
+    """Seconds where the picture jumps: a cut, a punch-in or a full-screen graphic."""
+    log = subprocess.run(["ffmpeg", "-v", "info", "-i", media, "-an", "-vf", "scale=320:-2,select='gt(scene,0.08)',showinfo",
+                          "-f", "null", "-"], capture_output=True, text=True).stderr
+    found = []
+    for t in (round(float(t), 2) for t in re.findall(r"pts_time:([0-9.]+)", log)):
+        if not found or t - found[-1] >= 0.3: found.append(t)
+    return found
+
+def reference(video, name):
+    name = os.path.basename(name)
+    media = os.path.join(video, "clips", name)
+    if not os.path.exists(media): raise SystemExit(f"no such clip: {name}")
+    held = references(video)
+    if name not in held:
+        with open(os.path.join(video, "clips", "references.json"), "w") as f: json.dump(held + [name], f)
+    total = probe_duration(media)
+    w, h = _display_size(media)
+    cuts = shots(media)
+    lengths = [round(b - a, 2) for a, b in zip([0.0] + cuts, cuts + [total])]
+    return {"reference": name, "sheet": sheet(video, media, min(4.0, max(0.5, 48 / max(total, 1))))["file"],
+            "duration": round(total, 1), "shape": "vertical" if h > w else "square" if h == w else "wide", "size": [w, h],
+            "shots": len(lengths), "average_shot": round(total / len(lengths), 2), "shortest_shot": min(lengths),
+            "longest_shot": max(lengths), "cuts_at": cuts[:80], "footage": [os.path.basename(f) for f in clips(video)]}
+
 # ------------------------------------------------------------------ cli
 def main(argv):
     if len(argv) < 2: print(__doc__); return 1
@@ -509,6 +543,7 @@ def main(argv):
     elif cmd == "plan": print(json.dumps(plan(video)))
     elif cmd == "sheet": print(json.dumps(sheet(video, *[a for a in argv[2:4] if a])))
     elif cmd == "adopt": print(json.dumps(adopt(video, argv[2])))
+    elif cmd == "reference": print(json.dumps(reference(video, argv[2])))
     else: print(__doc__); return 1
     return 0
 
