@@ -42,6 +42,29 @@ def _fallback(path, index):
     return TIKTOK, [36, 100, weight, 0]
 
 _fc, _fbytes = {}, {}
+def _axes(path):
+    """A variable font's axes as (tag, default, maximum), read from its fvar table; [] when it has none."""
+    import struct
+    try:
+        with open(path, "rb") as fh: data = fh.read()
+        for i in range(struct.unpack(">H", data[4:6])[0]):
+            tag, _, at, _ = struct.unpack(">4sIII", data[12 + 16 * i:28 + 16 * i])
+            if tag != b"fvar": continue
+            start, _, count, size = struct.unpack(">HHHH", data[at + 4:at + 12])
+            rows = [struct.unpack(">4siii", data[at + start + size * n:at + start + size * n + 16]) for n in range(count)]
+            return [(t, d / 65536, hi / 65536) for t, _, d, hi in rows]
+    except Exception: pass
+    return []
+
+
+def _heavy(f, path):
+    """A brand kit's variable font at its bold weight; the other axes stay at their defaults."""
+    axes = _axes(path)
+    if not axes: return
+    try: f.set_variation_by_axes([min(hi, 800) if tag == b"wght" else d for tag, d, hi in axes])
+    except Exception: pass
+
+
 def font(path, size, var=None, index=0):
     """Cached font. `var` = variation axes list, e.g. serif(…) uses [opsz, wght, 0].
     `index` picks a face inside a .ttc collection (HelveticaNeue.ttc: 1 = Bold).
@@ -59,7 +82,9 @@ def font(path, size, var=None, index=0):
         if src not in _fbytes:
             _fbytes[src] = open(src, "rb").read()
         f = ImageFont.truetype(io.BytesIO(_fbytes[src]), size, index=index)
-        if var is not None:
+        mine = src in _brand.fonts()
+        if mine and (var is None or src != TIKTOK): _heavy(f, src)
+        elif var is not None:
             try: f.set_variation_by_axes(list(var))
             except Exception: pass
         _fc[k] = f

@@ -38,6 +38,11 @@ def font(name, default):
     return path if path and os.path.exists(path) else default
 
 
+def fonts():
+    """Every font file the kit names."""
+    return set(_KIT.get("fonts", {}).values())
+
+
 def get(key, default=None):
     """Any other kit setting, e.g. brand.get("captions", {}).get("style", "kallaway")."""
     return _KIT.get(key, default)
