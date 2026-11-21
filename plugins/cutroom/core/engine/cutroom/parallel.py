@@ -48,7 +48,7 @@ def render(out, n, make_frame, open_sources, audio=None, workers=None, crf=16, f
     size is the frame size make_frame returns; the bitrate scales with it."""
     hardware = hardware_encoder()
     cores = os.cpu_count() or 4
-    workers = min(workers or (cores if hardware else max(1, cores - 2)), n)
+    workers = min(workers or int(os.environ.get("CUTROOM_WORKERS") or 0) or (cores if hardware or cores <= 8 else cores - 2), n)
     ctx = mp.get_context("fork")
     tmp = tempfile.mkdtemp(prefix="cutroom_chunks_", dir=os.path.dirname(os.path.abspath(out)))
     chunks = _bounds(n, workers, fps)

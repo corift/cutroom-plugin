@@ -63,7 +63,7 @@ def remote(src: str, ow: int, oh: int, matte_url: str, matte_token: str) -> None
         with open(cfg, "w") as f:
             f.write(f'header = "Authorization: Bearer {matte_token}"\n')
         url = f"{matte_url.rstrip('/')}/?w={ow}&h={oh}"
-        code = subprocess.check_output(["curl", "-s", "-m", "900", "-K", cfg, "-X", "POST", "--data-binary",
+        code = subprocess.check_output(["curl", "-s", "-L", "-m", "900", "-K", cfg, "-X", "POST", "--data-binary",
                                         f"@{small}", url, "-o", mask, "-w", "%{http_code}"]).decode()
         if code != "200":
             print(f"matte service returned HTTP {code}, falling back to CPU", file=sys.stderr)

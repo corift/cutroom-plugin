@@ -133,6 +133,16 @@ def paste(canvas, im, x, y, a=1.0):
     if a <= 0.003: return
     canvas.alpha_composite(with_alpha(im, a), (int(x), int(y)))
 
+def stamp(img, im, x, y, a=1.0):
+    """paste() for an RGB frame: composites only the patch the overlay covers, so the rest of the frame is never converted."""
+    if a <= 0.003: return
+    x, y = int(x), int(y)
+    box = (max(x, 0), max(y, 0), min(x + im.width, img.width), min(y + im.height, img.height))
+    if box[2] <= box[0] or box[3] <= box[1]: return
+    patch = img.crop(box).convert("RGBA")
+    patch.alpha_composite(with_alpha(im.crop((box[0] - x, box[1] - y, box[2] - x, box[3] - y)), a))
+    img.paste(patch.convert("RGB"), box[:2])
+
 def paste_center(canvas, im, cx, cy, a=1.0):
     paste(canvas, im, cx - im.width / 2, cy - im.height / 2, a)
 
@@ -237,7 +247,7 @@ def mezzanine(size=(W, H)):
     a keyframe every second so chunk readers seek cheaply, and fast to write."""
     if hardware_encoder():
         return ["-c:v", "h264_videotoolbox", "-allow_sw", "0", "-profile:v", "high", "-g", str(FPS), "-b:v", f"{bitrate(size, 2.5)}M", "-pix_fmt", "yuv420p"]
-    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-g", str(FPS), "-pix_fmt", "yuv420p"]
+    return ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", "-g", str(FPS), "-pix_fmt", "yuv420p"]
 
 class Encoder:
     def __init__(self, out, audio=None, crf=16, fps=FPS, size=(W, H)):
