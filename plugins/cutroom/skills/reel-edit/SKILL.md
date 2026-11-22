@@ -84,7 +84,7 @@ Everything in this look is set in TikTok Sans, which ships with Cutroom (`assets
 
 ## Rhythm rules
 
-- Rotate caption styles by section: `pop` → `serif` → `pop` → `sticker`. Never the same style twice in a row.
+- Rotate caption styles by section: `pop` → `serif` → `pop` → `sticker`. Never the same style twice in a row. For a calmer, magazine look use `spread`, `feature` or `masthead` (`effects/caption-editorial.md`).
 - A transition on roughly every other section, never two of the same kind in a row. Whip for a turn, glitch for a reveal, flash for a hard stop.
 - A camera change on every cut: alternate the zoom between sections (1.0 / 1.3 / 1.1 / 1.35). Jump cuts inside a section punch in by 12% on their own.
 - Captions hide while a `behind`, `count` or `comment` word is up (set `"captions": true` on the moment to keep them).

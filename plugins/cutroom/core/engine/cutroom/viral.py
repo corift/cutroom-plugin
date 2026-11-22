@@ -17,7 +17,8 @@ import math, os
 from functools import lru_cache
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageChops
-from .core import W, H, FPS, font, display, MONO, clamp, expo, cubic, inout, text_img, Reader, dilate
+from . import brand
+from .core import W, H, FPS, ASSETS, font, display, MONO, clamp, expo, cubic, inout, text_img, Reader, dilate
 from .blocks import back, sit, emoji_img, drop_shadow, place, ss
 
 HEAVY = 800
@@ -674,6 +675,170 @@ def _sticker(tok, rot):
 
 
 CAPTIONS.update({"pop": pop_caps, "serif": serif_caps, "sticker": sticker_caps})
+
+
+INSTRUMENT = brand.font("serif_italic", os.path.join(ASSETS, "fonts", "InstrumentSerif-Italic.ttf"))
+FEATURE_RED = (239, 68, 68)
+SMALL = set("a an the and or but so to of in on at by for with from as is am are was were be been it its it's "
+            "this that these those i i'm me my we our you your he she they them their his her just like than then "
+            "there here what when how who do did does not no if up out about into can will would could should "
+            "have has had get got all some very really".split())
+
+
+def _small(tok):
+    k = tok.lower().strip(",.!?\"'")
+    return k in SMALL or len(key_of(k)) <= 2
+
+
+def _main(g, keys):
+    hits = [i for i, w_ in enumerate(g) if key_of(clean(w_["w"])) in keys]
+    if hits:
+        return hits[0]
+    pool = [i for i, w_ in enumerate(g) if not _small(w_["w"])] or list(range(len(g)))
+    return max(pool, key=lambda i: len(clean(g[i]["w"])))
+
+
+@lru_cache(1024)
+def _tok(txt, kind, size, color=WHITE):
+    """one caption word with a soft shadow; returns (img, baseline y inside img)."""
+    if kind == "serif":
+        f = font(INSTRUMENT, size)
+        im = text_img(txt, f, fill=color)
+    else:
+        f = display(size, {"caps": 600, "line": 700}[kind])
+        im = text_img(txt.upper() if kind == "caps" else txt, f, fill=color, tracking=0.16 if kind == "caps" else -0.01)
+    base = im.pad + f.getmetrics()[0]
+    out = _soft(im, 12, 120, 4)
+    out.ink = (out.width - im.width) // 2 + im.pad + 2
+    return out, base + (out.height - im.height) // 2
+
+
+def _flow(toks, maxw, gap, align="center", x0=0, lead=0.78):
+    """toks [(img, baseline, size)] wrapped into lines no wider than maxw. Returns [(x, baseline_y)] per token
+    relative to a block centred on 0, and the block height."""
+    lines, cur, wd = [], [], 0
+    for i, (im, _, _) in enumerate(toks):
+        iw = im.width - 2 * im.ink
+        if cur and wd + gap + iw > maxw:
+            lines.append((cur, wd))
+            cur, wd = [], 0
+        wd += (gap if cur else 0) + iw
+        cur.append(i)
+    if cur:
+        lines.append((cur, wd))
+    pos, y = [None] * len(toks), 0
+    heights = [max(toks[i][2] for i in ln) * lead for ln, _ in lines]
+    for (ln, wd), lh in zip(lines, heights):
+        y += lh
+        x = x0 if align == "left" else -wd / 2
+        for i in ln:
+            pos[i] = (x - toks[i][0].ink, y)
+            x += toks[i][0].width - 2 * toks[i][0].ink + gap
+    total = sum(heights)
+    return [(x, by - total / 2 - total * 0.12) for x, by in pos], total
+
+
+def _put(canvas, im, base, x, by, a=1.0, blur=0.0, dy=0.0):
+    if a <= 0.003:
+        return
+    if blur > 0.3:
+        im = im.filter(ImageFilter.GaussianBlur(blur))
+    if a < 0.999:
+        im = im.copy()
+        im.putalpha(im.split()[3].point(lambda v: int(v * a)))
+    canvas.alpha_composite(im, (int(x), int(by - base + dy)))
+
+
+def spread_caps(canvas, t, words, keys=(), cy=1360, n=5):
+    """getyoutubetext "Spread": small tracked caps for the little words, a big Instrument Serif italic for the
+    words that carry the line, stacked tight and centred. Each word blurs in as it's said."""
+    g, _ = _active(groups(words, n), t)
+    if not g:
+        return
+    toks = []
+    for w_ in g:
+        c = clean(w_["w"])
+        big = key_of(c) in keys or not _small(c)
+        im, base = _tok(c, "serif", 168) if big else _tok(c, "caps", 46)
+        toks.append((im, base, 168 if big else 60))
+    pos, _ = _flow(toks, 820, 34, lead=0.84)
+    for w_, (im, base, _), (x, by) in zip(g, toks, pos):
+        u = clamp((t - w_["s"] + 0.03) / 0.2)
+        if u > 0:
+            _put(canvas, im, base, W / 2 + x, cy + by, cubic(u), 16 * (1 - u))
+
+
+def feature_caps(canvas, t, words, keys=(), cy=1420, n=5, color=FEATURE_RED):
+    """getyoutubetext "Feature": a left-set line of bold white words; the one word that carries it is a big red
+    Instrument Serif italic. Words rise in as they're said."""
+    g, _ = _active(groups(words, n), t)
+    if not g:
+        return
+    m = _main(g, keys)
+    toks = []
+    for i, w_ in enumerate(g):
+        c = clean(w_["w"])
+        im, base = _tok(c, "serif", 150, color) if i == m else _tok(c, "line", 62)
+        toks.append((im, base, 150 if i == m else 68))
+    pos, _ = _flow(toks, 900, 24, "left", 90 - W / 2)
+    for w_, (im, base, _), (x, by) in zip(g, toks, pos):
+        u = clamp((t - w_["s"] + 0.03) / 0.22)
+        if u > 0:
+            _put(canvas, im, base, W / 2 + x, cy + by, cubic(u), 0, 26 * (1 - cubic(u)))
+
+
+def _lines(words):
+    """masthead phrases: a whole spoken line, split only on a real pause or the end of a sentence."""
+    return groups(words, 12, 0.45)
+
+
+def masthead_back(canvas, t, words, keys=(), cutout=None, cy=None):
+    """getyoutubetext "Masthead", the part behind the person: the line's main word in a giant Instrument Serif
+    italic, up for the whole line and drawn before the person so the top of the head sits in front of it.
+    It sits on the head's top edge (from the cutout) unless cy is given."""
+    g, k = _active(_lines(words), t)
+    if not g:
+        return
+    u = clamp(k / 0.3)
+    im = _masthead_word(clean(g[_main(g, keys)]["w"]).lower())
+    if cy is None:
+        box = cutout.getchannel("A").point(lambda v: 255 if v > 128 else 0).getbbox() if cutout is not None else None
+        cy = clamp(box[1] - im.height * 0.08, im.height * 0.5, H * 0.45) if box else 560
+    lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    place(lay, im if u >= 1 else im.filter(ImageFilter.GaussianBlur(14 * (1 - u))), W / 2, cy, 1.06 - 0.06 * cubic(u), 0.0, cubic(u))
+    canvas.alpha_composite(lay)
+    if cutout is not None:
+        canvas.alpha_composite(cutout)
+
+
+@lru_cache(64)
+def _masthead_word(txt):
+    size = 330
+    while font(INSTRUMENT, size).getlength(txt) > 1000 and size > 120:
+        size -= 10
+    return _soft(text_img(txt, font(INSTRUMENT, size), fill=WHITE), 18, 90, 6)
+
+
+def masthead_caps(canvas, t, words, keys=(), cy=1500, n=4):
+    """getyoutubetext "Masthead", the line in front: the rest of the line in tracked caps, a few words at a time
+    as they're said. A bit made only of little words is left out. Pair with masthead_back."""
+    g, _ = _active(_lines(words), t)
+    if not g:
+        return
+    m = _main(g, keys)
+    part, _ = _active(groups([w_ for i, w_ in enumerate(g) if i != m], n), t)
+    if not part or all(_small(w_["w"]) for w_ in part):
+        return
+    toks = [(*_tok(clean(w_["w"]), "caps", 50), 58) for w_ in part]
+    pos, _ = _flow(toks, 940, 18)
+    for w_, (im, base, _), (x, by) in zip(part, toks, pos):
+        u = clamp((t - w_["s"] + 0.03) / 0.18)
+        if u > 0:
+            _put(canvas, im, base, W / 2 + x, cy + by, cubic(u))
+
+
+CAPTIONS.update({"spread": spread_caps, "feature": feature_caps, "masthead": masthead_caps})
+BEHIND_CAPTIONS = {"masthead": masthead_back}
 
 
 def darken(canvas, amt):

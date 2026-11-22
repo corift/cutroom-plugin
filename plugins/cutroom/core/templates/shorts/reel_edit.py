@@ -246,14 +246,20 @@ class Reel:
         sec = self.section_at(t)
         return sec.get("cy", inspect.signature(V.CAPTIONS[sec.get("caption", "pop")]).parameters["cy"].default)
 
-    def caption(self, cv, t, cy=None):
-        sec = self.section_at(t)
+    def covered(self, t):
         covers = [m for m in self.active(t, "behind", "comment", "count") if not m.get("captions")
                   and (m["do"] != "comment" or m.get("word_at_t") is not None and t >= m["word_at_t"])]
-        if covers or any(m.get("mode") == "result" for m in self.active(t, "refs")):
+        return bool(covers) or any(m.get("mode") == "result" for m in self.active(t, "refs"))
+
+    def section_words(self, sec):
+        return [w_ for w_ in self.words if sec["t"] - 0.01 <= w_["s"] < sec["end"]]
+
+    def caption(self, cv, t, cy=None):
+        sec = self.section_at(t)
+        if self.covered(t):
             return
         fn = V.CAPTIONS[sec.get("caption", "pop")]
-        ws = [w_ for w_ in self.words if sec["t"] - 0.01 <= w_["s"] < sec["end"]]
+        ws = self.section_words(sec)
         kw = {"keys": sec["keys"]} if "keys" in fn.__code__.co_varnames else {}
         if cy is not None or "cy" in sec:
             kw["cy"] = cy if cy is not None else sec["cy"]
@@ -346,8 +352,12 @@ class Reel:
         z = self.zoom(t)
         dx, dy = self.shake(t)
         cv = V.shot(fr, z, self.fy, dx, dy)
-        masked = mk is not None and self.active(t, "spotlight", "orbit", "swap", "refs", "behind", "count", "comment")
+        sec = self.section_at(t)
+        under = V.BEHIND_CAPTIONS.get(sec.get("caption"))
+        masked = mk is not None and (under or self.active(t, "spotlight", "orbit", "swap", "refs", "behind", "count", "comment"))
         mshot = V.shot(mk.convert("L"), z, self.fy, dx * mk.width / W, dy * mk.width / W) if masked else None
+        if under and not self.covered(t):
+            under(cv, t, self.section_words(sec), sec["keys"], V.person(cv, mshot) if mshot is not None else None)
         for m in self.active(t, "blur"):
             V.blur_band(cv, m.get("y", 1250), m.get("h", 300))
         for m in self.active(t, "spotlight"):

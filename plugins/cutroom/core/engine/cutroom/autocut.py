@@ -16,13 +16,13 @@ edit.json:
   cut        sentence ids left out          auto      ids the retake detector cut (a subset of cut)
   trims      [[s, e]] source seconds removed inside kept sentences (stumbles, restarts)
   nudges     [{"edge": start|end, "at": source seconds, "by": seconds}] one cut edge moved: positive keeps more sound
-  captions   {"style": plain|kallaway|pop|box|subtitle|rpn|none, "position": top|middle|bottom|null,
+  captions   {"style": plain|kallaway|pop|box|subtitle|rpn|spread|feature|masthead|none, "position": top|middle|bottom|null,
               "emphasis": ["key phrase"], "fixes": {"heard": "meant"}}
   format     vertical | source              pace      tight | natural
   zoom       punch | none                   hook      text shown over the first seconds ("" for none)
   template   a named look from TEMPLATES; setting it replaces captions.style, pace, zoom and format
 """
-import difflib, functools, json, os, re, subprocess, sys
+import difflib, functools, hashlib, json, os, re, subprocess, sys
 
 from PIL import Image, ImageDraw
 
@@ -30,7 +30,8 @@ from . import captions as cap, cutplan as cp, parallel
 from .core import FPS, Reader, cover, display, font, mezzanine, probe_duration, probe_size, stamp, text_img, wrap, HELV
 
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".webm", ".mkv")
-STYLES = ("plain", "kallaway", "pop", "box", "subtitle", "rpn", "none")
+EDITORIAL = ("spread", "feature", "masthead")
+STYLES = ("plain", "kallaway", "pop", "box", "subtitle", "rpn", "none", *EDITORIAL)
 POSITIONS = {"top": 0.2, "middle": 0.5, "bottom": 0.74}
 DEFAULTS = {"template": "clean", "cut": [], "auto": [], "trims": [], "nudges": [], "format": "vertical", "pace": "tight", "zoom": "none", "hook": "",
             "captions": {"style": "plain", "position": None, "emphasis": [], "fixes": {}}}
@@ -41,8 +42,12 @@ TEMPLATES = {
     "calm": {"captions": "subtitle", "pace": "natural", "zoom": "none", "format": "vertical", "hook": False},
     "podcast": {"captions": "box", "pace": "natural", "zoom": "none", "format": "source", "hook": False},
     "raw": {"captions": "none", "pace": "tight", "zoom": "none", "format": "source", "hook": False},
+    "spread": {"captions": "spread", "pace": "tight", "zoom": "none", "format": "vertical", "hook": False},
+    "feature": {"captions": "feature", "pace": "tight", "zoom": "punch", "format": "vertical", "hook": False},
+    "masthead": {"captions": "masthead", "pace": "tight", "zoom": "none", "format": "vertical", "hook": False},
 }
 PACES = {"tight": dict(max_pause=0.25, handle=0.08), "natural": dict(max_pause=0.6, handle=0.16)}
+ENGINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ZOOM = 1.14
 ZOOM_HOLD = 2.2
 HOOK_SECONDS = 3.2
@@ -344,6 +349,7 @@ def zoom_points(meta, total):
     return points
 
 def caption_art(span, t, style):
+    if style in EDITORIAL: style = "plain"
     if style in cap.WORD_STYLES:
         active = max((i for i, w in enumerate(span["words"]) if w["s"] <= t), default=0)
         return cap.words_img(span["words"], active, style)
@@ -473,13 +479,13 @@ def plan(video):
     c = edit["captions"]
     style = c["style"]
     spoken = out_words(words, meta, c["fixes"])
-    spans = [] if style == "none" else cap.chunk(cap.join_phrases(spoken, c["emphasis"]), style)
+    spans = [] if style == "none" else cap.chunk(cap.join_phrases(spoken, c["emphasis"]), "plain" if style in EDITORIAL else style)
     default_y = (0.78 if style == "subtitle" else 0.7) if h > w else 0.86
     n = next_version(video)
     made = {"version": n, "size": [w, h], "frame": [sw, sh], "fps": FPS, "duration": round(total, 3),
             "footage": round(probe_duration(path(video, "source.mp4")), 1), "cuts": len(segs) - 1,
             "clips": read(video, "clips.json", []), "segments": meta,
-            "captions": {"style": style, "y": POSITIONS[c["position"]] if c["position"] else default_y, "scale": min(w, h) / 1080,
+            "captions": {"style": "plain" if style in EDITORIAL else style, "y": POSITIONS[c["position"]] if c["position"] else default_y, "scale": min(w, h) / 1080,
                          "marker": list(cap.MARKER), "accent": list(cap.ACCENT),
                          "spans": [{"s": round(x["s"], 3), "e": round(x["e"], 3), "text": x["text"], "em": x["em"],
                                     "words": [{"w": k["w"], "s": round(k["s"], 3), "e": round(k["e"], 3)} for k in x["words"]]} for x in spans]},
@@ -506,13 +512,19 @@ def render(video):
     c = edit["captions"]
     style = c["style"]
     spoken = out_words(words, meta, c["fixes"])
-    spans = [] if style == "none" else cap.chunk(cap.join_phrases(spoken, c["emphasis"]), style)
+    spans = [] if style == "none" else cap.chunk(cap.join_phrases(spoken, c["emphasis"]), "plain" if style in EDITORIAL else style)
     scale = min(w, h) / 1080
     default_y = (0.78 if style == "subtitle" else 0.7) if h > w else 0.86
     y = (POSITIONS[c["position"]] if c["position"] else default_y) * h
     flips = zoom_points(meta, total) if edit["zoom"] == "punch" else []
     hook = hook_art(edit["hook"], 1080) if edit["hook"] else None
     hook_end = min(HOOK_SECONDS, total)
+    magazine = style in EDITORIAL and (w, h) == (1080, 1920)
+    if magazine:
+        from . import viral as V
+        keys = {V.key_of(V.clean(k)) for p in c["emphasis"] for k in p.split()}
+        lines = {"cy": y} if c["position"] else {}
+    mask = person_mask(video, base, segs) if magazine and style == "masthead" else None
 
     def sized(im):
         if abs(scale - 1) < 0.02: return im
@@ -521,10 +533,12 @@ def render(video):
     @functools.lru_cache(maxsize=None)
     def hook_sized(): return sized(hook)
 
-    def frame(i, reader):
+    def frame(i, srcs):
         t = i / FPS
-        img = reader.next()
-        if sum(1 for p in flips if p <= t) % 2: img = cover(img, w, h, z=ZOOM, cy=0.38)
+        img = srcs[0].next()
+        zoomed = sum(1 for p in flips if p <= t) % 2
+        if zoomed: img = cover(img, w, h, z=ZOOM, cy=0.38)
+        if magazine: return magazine_frame(t, img, srcs[1].next() if mask else None, zoomed)
         span = next((s for s in spans if s["s"] <= t < s["e"]), None)
         if not span and not (hook and t < hook_end): return img
         canvas = img.copy()
@@ -537,9 +551,24 @@ def render(video):
             stamp(canvas, im, w / 2 - im.width / 2, y - im.height / 2)
         return canvas
 
+    def magazine_frame(t, img, matte, zoomed):
+        canvas = img.convert("RGBA")
+        if matte is not None:
+            if zoomed: matte = cover(matte, w, h, z=ZOOM, cy=0.38)
+            V.masthead_back(canvas, t, spoken, keys, V.person(canvas, matte))
+        V.CAPTIONS[style](canvas, t, spoken, keys, **lines)
+        if hook and t < hook_end:
+            im = hook_sized()
+            stamp(canvas, im, w / 2 - im.width / 2, h * 0.13, min(1.0, t / 0.18, (hook_end - t) / 0.2))
+        return canvas
+
+    def sources(t0):
+        base_reader = Reader(base, w, h, t0, fill=True)
+        return (base_reader, Reader(mask, w, h, t0, fill=True)) if mask else (base_reader,)
+
     n = next_version(video)
     out = path(video, f"cut_v{n}.mp4")
-    parallel.render(out, int(total * FPS), frame, lambda t0: Reader(base, w, h, t0, fill=True), audio=base, size=(w, h))
+    parallel.render(out, int(total * FPS), frame, sources, audio=base, size=(w, h))
     os.remove(base)
     write(video, "cut_transcript.json", {"words": [{"word": x["w"], "start": round(x["s"], 3), "end": round(x["e"], 3)} for x in spoken]})
     write(video, "storyboard.json", {"beats": [], "transcript": "cut_transcript.json"})
@@ -548,6 +577,35 @@ def render(video):
         f.write("\n".join(s["text"] for s in sentences if s["id"] not in cut) + "\n")
     return {"file": f"edit/cut_v{n}.mp4", "version": n, "duration": round(total, 1),
             "footage": round(probe_duration(src), 1), "cuts": len(segs) - 1, "size": [w, h]}
+
+def _masker():
+    if sys.platform != "darwin":
+        return [sys.executable, os.path.join(ENGINE, "personmask.py")]
+    swift = os.path.join(ENGINE, "personmask.swift")
+    tool = os.path.join(os.path.expanduser("~/Library/Caches/cutroom"), "personmask")
+    if not os.path.exists(tool) or os.path.getmtime(tool) < os.path.getmtime(swift):
+        os.makedirs(os.path.dirname(tool), exist_ok=True)
+        subprocess.run(["swiftc", "-O", swift, "-o", tool], check=True)
+    return [tool]
+
+def person_mask(video, media, segs):
+    """A person matte of the cut (white where the person is), kept per cut so re-renders of the same cut reuse it."""
+    name = "mask_" + hashlib.sha1(json.dumps(segs).encode()).hexdigest()[:10] + ".mp4"
+    out = path(video, name)
+    if os.path.exists(out): return out
+    for old in os.listdir(edit_dir(video)):
+        if old.startswith("mask_") and old.endswith(".mp4"): os.remove(path(video, old))
+    sw, sh = probe_size(media)
+    mw, mh = sw // 2 - sw // 2 % 2, sh // 2 - sh // 2 % 2
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [ENGINE, os.environ.get("PYTHONPATH")]))}
+    part = out + ".part.mp4"
+    maker = subprocess.Popen([*_masker(), media, str(mw), str(mh)], stdout=subprocess.PIPE, env=env)
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "gray", "-s", f"{mw}x{mh}", "-r", str(FPS), "-i", "-",
+                    "-c:v", "libx264", "-crf", "8", "-pix_fmt", "yuv420p", part], stdin=maker.stdout, check=True)
+    maker.stdout.close()
+    if maker.wait(): raise RuntimeError("the person mask failed")
+    os.replace(part, out)
+    return out
 
 def sheet(video, media=None, fps=None):
     latest = status(video)["latest"]
