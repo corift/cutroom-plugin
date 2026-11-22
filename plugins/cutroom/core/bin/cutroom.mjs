@@ -20,6 +20,7 @@
  *   cutroom link <project> [<folder>] [--videos "short form"]   # this folder (default: here) is the project
  *   cutroom link                          # show where each project lives
  *   cutroom unlink <project>              # forget this Mac's folder for the project
+ *   cutroom render "<video folder>" -- python3 edit/render_v2.py   # in the cloud when the account turns it on
  *
  * (Run it as `node "$CUTROOM_CORE/bin/cutroom.mjs" …` when `cutroom` isn't on PATH.)
  *
@@ -38,12 +39,17 @@
  * the render (edit/hook_a.caption.md for edit/hook_a_v1.mp4), when they exist.
  * final copies each finished cut to final/<slug>.mp4 with its caption and script, replacing the
  * cut's previous final, so final/ always holds exactly what's done.
+ * render runs a command on this Mac, or, when the account has Render in the cloud on, copies the
+ * video folder, the project, the account and the core to a cloud sandbox at the same paths, runs
+ * it there and brings back every file it wrote in the video folder. --local always runs it here,
+ * --include adds another file or folder the command reads.
  */
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   copyFileSync,
   createReadStream,
+  createWriteStream,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -79,6 +85,17 @@ const POLL_MAX = 30000;
 
 const TEXT_EXT = new Set([".md", ".json", ".txt", ".srt", ".vtt", ".py", ".csv", ".yaml", ".yml"]);
 const INLINE_MAX = 512 * 1024;
+const RENDER_ENV = [
+  "CUTROOM_HOME",
+  "CUTROOM_CORE",
+  "CUTROOM_ENGINE",
+  "CUTROOM_ASSETS",
+  "CUTROOM_ACCOUNT",
+  "CUTROOM_WORKSPACE",
+  "CUTROOM_PROJECT",
+  "CUTROOM_BRAND_KIT"
+];
+const RENDER_DONE = new Set(["done", "failed", "canceled"]);
 const SKIP =
   /(^|\/)(\.DS_Store|\.git|\.cutroom|__pycache__|node_modules|\.review|(?:sullyedit|cutroom)_chunks[^/]*)(\/|$)|\.(tmp|log)$/;
 const LARGE_BYTES = 25 * 1024 * 1024;
@@ -100,7 +117,10 @@ const TYPES = {
   ".txt": "text/plain; charset=utf-8"
 };
 
-const [cmd, ...args] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const dashes = argv.indexOf("--");
+const [cmd, ...args] = dashes < 0 ? argv : argv.slice(0, dashes);
+const tail = dashes < 0 ? [] : argv.slice(dashes + 1);
 const LOCAL_ONLY = new Set(["link", "unlink"]);
 const BOOL_FLAGS = new Set(["no-video", "include-media", "text-only", "local", "upload", "wait"]);
 const takesValue = (a) => a?.startsWith("--") && !BOOL_FLAGS.has(a.slice(2));
@@ -132,6 +152,11 @@ try {
   else if (cmd === "scripts") await listScripts(flags.project);
   else if (cmd === "link") link(positional[0], positional[1], flags.videos);
   else if (cmd === "unlink") unlink(positional[0]);
+  else if (cmd === "render")
+    await render(videoDir(positional[0]), tail, {
+      local: !!flags.local,
+      include: args.flatMap((a, i) => (args[i - 1] === "--include" ? [a] : []))
+    });
   else {
     console.log(readFileSync(fileURLToPath(import.meta.url), "utf8").split("*/")[0]);
     process.exit(cmd && cmd !== "help" ? 1 : 0);
@@ -653,6 +678,165 @@ function followReviewEvents({ after: since, onEvents, onError }) {
     stopped = true;
     clearTimeout(timer);
     socket?.close();
+  };
+}
+
+async function render(dir, words, { local, include }) {
+  if (!words.length) throw new Error('what to run? cutroom render "<video folder>" -- python3 …');
+  const command =
+    words.length === 1 ? words[0] : words.map((w) => `'${w.replace(/'/g, `'\\''`)}'`).join(" ");
+  const cloud = !local && (await convex("query", "workspaces:cloudRender", {}));
+  if (!cloud) {
+    const done = spawnSync("bash", ["-c", command], { stdio: "inherit" });
+    process.exit(done.status ?? 1);
+  }
+  const video = F.toLocal(dir);
+  const slug = dir.split("/")[1];
+  const core = process.env.CUTROOM_CORE ?? dirname(dirname(fileURLToPath(import.meta.url)));
+  const videos = F.toLocal(`projects/${slug}/videos`);
+  const inside = (abs, root) => abs === root || abs.startsWith(`${root}/`);
+  const projectRoot = F.toLocal(`projects/${slug}`);
+  const project = existsSync(projectRoot)
+    ? listFiles(projectRoot).filter((abs) => !inside(abs, videos))
+    : [];
+  const account = existsSync(F.toLocal("account")) ? listFiles(F.toLocal("account")) : [];
+  const extra = include.flatMap((p) => {
+    const abs = resolve(process.cwd(), p);
+    if (!existsSync(abs)) throw new Error(`--include ${p}: not found`);
+    return statSync(abs).isDirectory() ? listFiles(abs) : [abs];
+  });
+  const paths = [
+    ...new Set([...listFiles(video), ...project, ...account, ...listFiles(core), ...extra])
+  ];
+
+  const cache = hashCache();
+  const files = [];
+  for (const abs of paths) files.push({ path: abs, ...(await cache.hash(abs)) });
+  cache.save();
+  const total = files.reduce((n, f) => n + f.size, 0);
+  console.log(`cloud render: ${files.length} files, ${mb(total)}`);
+
+  const missing = await convex("action", "renders:prepare", {
+    sha256s: files.map((f) => f.sha256)
+  });
+  const bySha = new Map(files.map((f) => [f.sha256, f]));
+  let sent = 0;
+  const queue = [...missing];
+  const upload = async () => {
+    for (let next = queue.shift(); next; next = queue.shift()) {
+      const f = bySha.get(next.sha256);
+      if (f.size > LARGE_BYTES)
+        process.stdout.write(`  ↑ ${relative(process.cwd(), f.path)} (${mb(f.size)})\n`);
+      const res = await fetch(next.url, {
+        method: "PUT",
+        headers: { "content-type": "application/octet-stream", "content-length": String(f.size) },
+        body: Readable.toWeb(createReadStream(f.path)),
+        duplex: "half"
+      });
+      if (!res.ok)
+        throw new Error(`upload failed for ${f.path}: ${res.status} ${await res.text()}`);
+      sent += f.size;
+    }
+  };
+  await Promise.all(Array.from({ length: 8 }, upload));
+  if (sent) console.log(`uploaded ${mb(sent)}`);
+
+  const env = Object.fromEntries(
+    RENDER_ENV.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : []))
+  );
+  env.CUTROOM_CORE = core;
+  env.PYTHONPATH = join(core, "engine");
+  const renderId = await convex("mutation", "renders:start", {
+    command,
+    cwd: process.cwd(),
+    collect: video,
+    env,
+    files
+  });
+  const stop = () => {
+    convex("mutation", "renders:cancel", { renderId })
+      .catch(() => {})
+      .finally(() => process.exit(130));
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+
+  let shown = "";
+  let status = "";
+  for (;;) {
+    const job = await convex("query", "renders:get", { renderId });
+    if (job.status !== status && !RENDER_DONE.has(job.status)) {
+      status = job.status;
+      console.log(`cloud render: ${status}`);
+    }
+    if (job.log && job.log !== shown) {
+      const anchor = shown.slice(-300);
+      const at = anchor ? job.log.lastIndexOf(anchor) : -1;
+      process.stdout.write(at >= 0 ? job.log.slice(at + anchor.length) : job.log);
+      shown = job.log;
+    }
+    if (RENDER_DONE.has(job.status)) {
+      await bringBack(video, job.outputs, cache);
+      cache.save();
+      if (job.status === "done") return console.log("cloud render: done");
+      throw new Error(
+        job.status === "canceled"
+          ? "cloud render canceled"
+          : (job.error ?? `the command exited with ${job.exitCode}`)
+      );
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
+async function bringBack(video, outputs, cache) {
+  const wanted = [];
+  for (const o of outputs) {
+    if (!o.path.startsWith(`${video}/`) || o.path.split("/").includes("..")) continue;
+    if (existsSync(o.path) && (await cache.hash(o.path)).sha256 === o.sha256) continue;
+    wanted.push(o);
+  }
+  if (!wanted.length) return;
+  const links = new Map(
+    (
+      await convex("action", "media:downloadUrls", { keys: [...new Set(wanted.map((o) => o.key))] })
+    ).map((l) => [l.key, l.url])
+  );
+  for (const o of wanted) {
+    process.stdout.write(`  ↓ ${relative(process.cwd(), o.path)} (${mb(o.size)})\n`);
+    const res = await fetch(links.get(o.key));
+    if (!res.ok || !res.body) throw new Error(`download failed for ${o.path}: ${res.status}`);
+    mkdirSync(dirname(o.path), { recursive: true });
+    const part = `${o.path}.part`;
+    await pipeline(Readable.fromWeb(res.body), createWriteStream(part));
+    renameSync(part, o.path);
+  }
+}
+
+function hashCache() {
+  const file = join(ROOT, ".cutroom/hashes.json");
+  let saved = {};
+  try {
+    saved = JSON.parse(readFileSync(file, "utf8"));
+  } catch {}
+  const fresh = {};
+  return {
+    async hash(abs) {
+      const st = statSync(abs);
+      const stamp = `${st.size}:${st.mtimeMs}`;
+      const hit = saved[abs];
+      if (hit?.stamp === stamp) {
+        fresh[abs] = hit;
+        return { size: st.size, sha256: hit.sha256 };
+      }
+      const { size, sha256 } = await settledHash(abs);
+      fresh[abs] = saved[abs] = { stamp: `${size}:${statSync(abs).mtimeMs}`, sha256 };
+      return { size, sha256 };
+    },
+    save() {
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, JSON.stringify({ ...saved, ...fresh }));
+    }
   };
 }
 
