@@ -108,6 +108,21 @@ const TEXT_EXT = new Set([
   ".js"
 ]);
 const HYPERFRAMES = "hyperframes@0.9.85";
+const HYPERFRAMES_BLOCKED = [
+  "events",
+  "usage",
+  "feedback",
+  "share",
+  "publish",
+  "cloud",
+  "lambda",
+  "cloudrun",
+  "skills",
+  "upgrade",
+  "open",
+  "catch-up",
+  "auth"
+];
 const COMPOSE = ["init", "check", "frames", "preview", "render", "hyperframes"];
 const LANES = ["Footage", "Graphics", "Overlays", "Captions", "Sound"];
 const INLINE_MAX = 512 * 1024;
@@ -958,6 +973,10 @@ async function compose({ action, dir, slug, flags, tail }) {
   if (action === "check") return run(["check"]);
   if (action === "hyperframes") {
     if (!tail.length) throw new Error(`compose hyperframes "<video folder>" <slug> -- <command>`);
+    if (HYPERFRAMES_BLOCKED.includes(tail[0]))
+      throw new Error(
+        `hyperframes ${tail[0]} is off in Cutroom: it reports back, publishes or updates outside the pin`
+      );
     return run(tail);
   }
   if (action === "frames") {
