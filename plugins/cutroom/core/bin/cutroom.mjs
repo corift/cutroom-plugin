@@ -20,7 +20,7 @@
  *   cutroom link <project> [<folder>] [--videos "short form"]   # this folder (default: here) is the project
  *   cutroom link                          # show where each project lives
  *   cutroom unlink <project>              # forget this Mac's folder for the project
- *   cutroom render "<video folder>" -- python3 edit/render_v2.py   # in the cloud when the account turns it on
+ *   cutroom render "<video folder>" -- python3 edit/render_v2.py   # runs inside the video folder; in the cloud when the account turns it on
  *
  * (Run it as `node "$CUTROOM_CORE/bin/cutroom.mjs" …` when `cutroom` isn't on PATH.)
  *
@@ -685,12 +685,12 @@ async function render(dir, words, { local, include }) {
   if (!words.length) throw new Error('what to run? cutroom render "<video folder>" -- python3 …');
   const command =
     words.length === 1 ? words[0] : words.map((w) => `'${w.replace(/'/g, `'\\''`)}'`).join(" ");
+  const video = F.toLocal(dir);
   const cloud = !local && (await convex("query", "workspaces:cloudRender", {}));
   if (!cloud) {
-    const done = spawnSync("bash", ["-c", command], { stdio: "inherit" });
+    const done = spawnSync("bash", ["-c", command], { stdio: "inherit", cwd: video });
     process.exit(done.status ?? 1);
   }
-  const video = F.toLocal(dir);
   const slug = dir.split("/")[1];
   const core = process.env.CUTROOM_CORE ?? dirname(dirname(fileURLToPath(import.meta.url)));
   const videos = F.toLocal(`projects/${slug}/videos`);
@@ -727,12 +727,14 @@ async function render(dir, words, { local, include }) {
       const f = bySha.get(next.sha256);
       if (f.size > LARGE_BYTES)
         process.stdout.write(`  ↑ ${relative(process.cwd(), f.path)} (${mb(f.size)})\n`);
-      const res = await fetch(next.url, {
-        method: "PUT",
-        headers: { "content-type": "application/octet-stream", "content-length": String(f.size) },
-        body: Readable.toWeb(createReadStream(f.path)),
-        duplex: "half"
-      });
+      const res = await retrying(() =>
+        fetch(next.url, {
+          method: "PUT",
+          headers: { "content-type": "application/octet-stream", "content-length": String(f.size) },
+          body: Readable.toWeb(createReadStream(f.path)),
+          duplex: "half"
+        })
+      );
       if (!res.ok)
         throw new Error(`upload failed for ${f.path}: ${res.status} ${await res.text()}`);
       sent += f.size;
@@ -748,7 +750,7 @@ async function render(dir, words, { local, include }) {
   env.PYTHONPATH = join(core, "engine");
   const renderId = await convex("mutation", "renders:start", {
     command,
-    cwd: process.cwd(),
+    cwd: video,
     collect: video,
     env,
     files
@@ -789,6 +791,19 @@ async function render(dir, words, { local, include }) {
   }
 }
 
+async function retrying(send, tries = 5) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const res = await send();
+      if ((res.status < 500 && res.status !== 429) || attempt === tries) return res;
+      await res.body?.cancel();
+    } catch (error) {
+      if (attempt === tries) throw error;
+    }
+    await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+  }
+}
+
 async function bringBack(video, outputs, cache) {
   const wanted = [];
   for (const o of outputs) {
@@ -804,7 +819,7 @@ async function bringBack(video, outputs, cache) {
   );
   for (const o of wanted) {
     process.stdout.write(`  ↓ ${relative(process.cwd(), o.path)} (${mb(o.size)})\n`);
-    const res = await fetch(links.get(o.key));
+    const res = await retrying(() => fetch(links.get(o.key)));
     if (!res.ok || !res.body) throw new Error(`download failed for ${o.path}: ${res.status}`);
     mkdirSync(dirname(o.path), { recursive: true });
     const part = `${o.path}.part`;
