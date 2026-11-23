@@ -357,8 +357,7 @@ def caption_art(span, t, style):
     if style == "plain": return cap.caption_img(span["text"], "kallaway")
     return cap.caption_img(span["text"], style, pill=style == "rpn", em=span["em"])
 
-def hook_art(text, width):
-    f = display(64, 800)
+def hook_lines(text, f, width=1080):
     limit = width - 150
     lines = wrap(text, f, limit)
     for _ in range(8):
@@ -367,7 +366,11 @@ def hook_art(text, width):
         tighter = wrap(text, f, limit)
         if len(tighter) > len(lines): break
         lines = tighter
-    lines = lines[:3]
+    return lines[:3]
+
+def hook_art(text, width):
+    f = display(64, 800)
+    lines = hook_lines(text, f, width)
     asc, desc = f.getmetrics()
     lh, px, py = asc + desc + 6, 34, 22
     w = int(max(f.getlength(l) for l in lines)) + 2 * px
@@ -499,16 +502,15 @@ def plan(video):
     return {"file": f"edit/plan_v{n}.json", "version": n, "duration": round(total, 1), "footage": made["footage"],
             "cuts": len(segs) - 1, "size": [w, h], "device": True}
 
-def render(video):
-    edit = load_edit(video)
-    segs, words, sentences = segments_of(video, edit)
-    src = path(video, "source.mp4")
-    base = path(video, "base.mp4")
-    meta = cp.build(src, segs, base)
-    total = probe_duration(base)
+def renderer():
+    from . import htmlcut
+    chosen = os.environ.get("CUTROOM_RENDERER", "").lower()
+    if chosen == "pillow": return "pillow"
+    if not htmlcut.available(): return "pillow"
+    return "html" if chosen == "html" or sys.platform == "darwin" else "pillow"
 
-    sw, sh = probe_size(base)
-    w, h = (1080, 1920) if edit["format"] == "vertical" else (sw - sw % 2, sh - sh % 2)
+def look_of(video, edit, words, meta, total, size):
+    w, h = size
     c = edit["captions"]
     style = c["style"]
     spoken = out_words(words, meta, c["fixes"])
@@ -516,15 +518,60 @@ def render(video):
     scale = min(w, h) / 1080
     default_y = (0.78 if style == "subtitle" else 0.7) if h > w else 0.86
     y = (POSITIONS[c["position"]] if c["position"] else default_y) * h
-    flips = zoom_points(meta, total) if edit["zoom"] == "punch" else []
-    hook = hook_art(edit["hook"], 1080) if edit["hook"] else None
-    hook_end = min(HOOK_SECONDS, total)
     magazine = style in EDITORIAL and (w, h) == (1080, 1920)
+    keys = set()
     if magazine:
         from . import viral as V
         keys = {V.key_of(V.clean(k)) for p in c["emphasis"] for k in p.split()}
-        lines = {"cy": y} if c["position"] else {}
-    mask = person_mask(video, base, segs) if magazine and style == "masthead" else None
+    return {"size": (w, h), "total": total, "style": style, "spoken": spoken, "words": spoken, "spans": spans, "scale": scale,
+            "y": y / scale, "stage": (w / scale, h / scale), "cy": y if c["position"] else None, "magazine": magazine, "keys": keys,
+            "flips": zoom_points(meta, total) if edit["zoom"] == "punch" else [], "zoom": ZOOM,
+            "hook": edit["hook"], "hook_end": min(HOOK_SECONDS, total)}
+
+def render(video):
+    edit = load_edit(video)
+    segs, words, sentences = segments_of(video, edit)
+    src = path(video, "source.mp4")
+    base = path(video, "base.mp4")
+    meta = cp.build(src, segs, base)
+    total = probe_duration(base)
+    sw, sh = probe_size(base)
+    size = (1080, 1920) if edit["format"] == "vertical" else (sw - sw % 2, sh - sh % 2)
+    look = look_of(video, edit, words, meta, total, size)
+    mask = person_mask(video, base, segs) if look["magazine"] and look["style"] == "masthead" else None
+    n = next_version(video)
+    out = path(video, f"cut_v{n}.mp4")
+    drawn = renderer()
+    if drawn == "html":
+        from . import htmlcut
+        home = path(video, "cut")
+        try:
+            htmlcut.write(home, look, base, mask)
+            htmlcut.render(home, out)
+        except Exception as error:
+            print(f"the html render failed, drawing with pillow instead: {error}", file=sys.stderr)
+            drawn = "pillow"
+            if not os.path.exists(base): os.replace(os.path.join(home, "assets", "base.mp4"), base)
+    if drawn == "pillow":
+        draw(look, base, mask, out)
+    if os.path.exists(base): os.remove(base)
+    spoken = look["spoken"]
+    write(video, "cut_transcript.json", {"words": [{"word": x["w"], "start": round(x["s"], 3), "end": round(x["e"], 3)} for x in spoken]})
+    write(video, "storyboard.json", {"beats": [], "transcript": "cut_transcript.json"})
+    with open(path(video, "cut.script.md"), "w") as f:
+        cut = set(edit["cut"])
+        f.write("\n".join(s["text"] for s in sentences if s["id"] not in cut) + "\n")
+    return {"file": f"edit/cut_v{n}.mp4", "version": n, "duration": round(total, 1),
+            "footage": round(probe_duration(src), 1), "cuts": len(segs) - 1, "size": list(size), "renderer": drawn}
+
+def draw(look, base, mask, out):
+    w, h = look["size"]
+    total, style, spans, scale, spoken = look["total"], look["style"], look["spans"], look["scale"], look["spoken"]
+    y, flips, hook_end, magazine, keys = look["y"] * scale, look["flips"], look["hook_end"], look["magazine"], look["keys"]
+    hook = hook_art(look["hook"], 1080) if look["hook"] else None
+    lines = {"cy": look["cy"]} if look["cy"] is not None else {}
+    if magazine:
+        from . import viral as V
 
     def sized(im):
         if abs(scale - 1) < 0.02: return im
@@ -566,17 +613,7 @@ def render(video):
         base_reader = Reader(base, w, h, t0, fill=True)
         return (base_reader, Reader(mask, w, h, t0, fill=True)) if mask else (base_reader,)
 
-    n = next_version(video)
-    out = path(video, f"cut_v{n}.mp4")
     parallel.render(out, int(total * FPS), frame, sources, audio=base, size=(w, h))
-    os.remove(base)
-    write(video, "cut_transcript.json", {"words": [{"word": x["w"], "start": round(x["s"], 3), "end": round(x["e"], 3)} for x in spoken]})
-    write(video, "storyboard.json", {"beats": [], "transcript": "cut_transcript.json"})
-    with open(path(video, "cut.script.md"), "w") as f:
-        cut = set(edit["cut"])
-        f.write("\n".join(s["text"] for s in sentences if s["id"] not in cut) + "\n")
-    return {"file": f"edit/cut_v{n}.mp4", "version": n, "duration": round(total, 1),
-            "footage": round(probe_duration(src), 1), "cuts": len(segs) - 1, "size": [w, h]}
 
 def _masker():
     if sys.platform != "darwin":
