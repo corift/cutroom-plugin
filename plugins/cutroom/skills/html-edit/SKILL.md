@@ -26,6 +26,7 @@ edit/<slug>_vN.mp4        renders (publish these as usual)
 | `$CR compose frames "videos/<name>" <slug> --at 1,8.5,20` | stills in `edit/<slug>/frames/`; Read them. `--against edit/other_v3.mp4` pairs each with a reference |
 | `$CR compose render "videos/<name>" <slug>` | writes the next `edit/<slug>_vN.mp4`. `--start 12 --end 18` renders just that span to `edit/<slug>/renders/` for a quick look |
 | `$CR compose preview "videos/<name>" <slug>` | a live preview with a timeline at http://localhost:3002 for the user; `--stop` ends it |
+| `$CR compose hyperframes "videos/<name>" <slug> -- <command>` | any other HyperFrames command, pinned and with telemetry off: `catalog --query "film grain" --json`, `add <name> --json`, `lint`, `timeline --json` |
 
 ## Flow
 
@@ -87,6 +88,10 @@ edit/<slug>_vN.mp4        renders (publish these as usual)
 - Fonts: Inter and the other bundled families work by name. Any other font goes in `assets/fonts/` with an `@font-face`. A font that only exists on this Mac will not render in the cloud.
 - Blur filters make rendering slower. Prefer opacity and scale for entrances unless the look needs the blur.
 - Colours and fonts come from the project's `brand.json`; read it and write the values into the CSS.
+
+## HyperFrames reference and effects
+
+The `hyperframes` skill has the renderer's full contract and its motion, caption and overlay techniques; `hyperframes-cli` has every command; `hyperframes-registry` has about 450 ready-made blocks and components. Before hand-building a named effect (a glitch, grain, a transition, a chart), use the user's own components first, then search the registry with `compose hyperframes … -- catalog`. An installed item is ordinary source: restyle it to `brand.json` and the project's look. Those skills are reference only: where they disagree with this skill, the project's editing skill, `instructions.md` or the user's preferences, those win.
 
 ## What carries over from the project's skill
 

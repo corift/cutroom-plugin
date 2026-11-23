@@ -26,6 +26,7 @@
  *   cutroom compose frames "<video folder>" <slug> --at 1,8.5,20 [--against edit/old_v3.mp4]   # stills in edit/<slug>/frames
  *   cutroom compose preview "<video folder>" <slug> [--port 3002]   # live preview with a timeline; --stop ends it
  *   cutroom compose render "<video folder>" <slug> [--version 3] [--start 12 --end 18]   # writes edit/<slug>_vN.mp4
+ *   cutroom compose hyperframes "<video folder>" <slug> -- catalog --query "glitch" --json   # any other Hyperframes command, pinned
  *
  * (Run it as `node "$CUTROOM_CORE/bin/cutroom.mjs" …` when `cutroom` isn't on PATH.)
  *
@@ -107,7 +108,7 @@ const TEXT_EXT = new Set([
   ".js"
 ]);
 const HYPERFRAMES = "hyperframes@0.9.85";
-const COMPOSE = ["init", "check", "frames", "preview", "render"];
+const COMPOSE = ["init", "check", "frames", "preview", "render", "hyperframes"];
 const LANES = ["Footage", "Graphics", "Overlays", "Captions", "Sound"];
 const INLINE_MAX = 512 * 1024;
 const RENDER_ENV = [
@@ -190,7 +191,8 @@ try {
       action: positional[0],
       dir: videoDir(positional[1]),
       slug: positional[2],
-      flags
+      flags,
+      tail
     });
   else if (cmd === "render")
     await render({
@@ -911,7 +913,7 @@ function hashCache() {
 
 /* ---------- helpers ---------- */
 
-async function compose({ action, dir, slug, flags }) {
+async function compose({ action, dir, slug, flags, tail }) {
   if (!COMPOSE.includes(action) || !slug)
     throw new Error(`compose ${COMPOSE.join("|")} "<video folder>" <slug>`);
   if (!/^[a-z0-9][a-z0-9_]*$/.test(slug))
@@ -954,6 +956,10 @@ async function compose({ action, dir, slug, flags }) {
   if (!existsSync(join(home, "index.html")))
     throw new Error(`${home}/index.html not found: run compose init first`);
   if (action === "check") return run(["check"]);
+  if (action === "hyperframes") {
+    if (!tail.length) throw new Error(`compose hyperframes "<video folder>" <slug> -- <command>`);
+    return run(tail);
+  }
   if (action === "frames") {
     if (!flags.at) throw new Error("--at takes the seconds to capture, e.g. --at 1,8.5,20");
     const against = flags.against && resolve(F.toLocal(dir), flags.against);
