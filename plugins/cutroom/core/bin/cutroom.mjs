@@ -889,6 +889,7 @@ async function convex(kind, path, args) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || body.status === "error") {
+    if (typeof body.errorData === "string") throw new Error(body.errorData);
     throw new Error(`${path}: ${body.errorMessage ?? res.status}`);
   }
   return body.value;
