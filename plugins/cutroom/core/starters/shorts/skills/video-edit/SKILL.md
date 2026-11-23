@@ -1,6 +1,6 @@
 ---
 name: video-edit
-description: Edit a raw talking-head recording into a finished vertical short (Instagram Reels / TikTok / Shorts) — silence-snapped sentence cuts, a stack layout with person pop-out, bold captions in one fixed spot, animated explainer graphics, full-screen proof, and real-sample sound design laid on storyboard cues. Use when asked to edit, cut, caption, storyboard, add B-roll/animations/SFX to, or re-render a short-form talking-head video. Pure Python (Pillow + numpy + ffmpeg), no NLE, no HyperFrames/Remotion.
+description: Edit a raw talking-head recording into a finished vertical short (Instagram Reels / TikTok / Shorts) — silence-snapped sentence cuts, a stack layout with person pop-out, bold captions in one fixed spot, animated explainer graphics, full-screen proof, and real-sample sound design laid on storyboard cues. Use when asked to edit, cut, caption, storyboard, add B-roll/animations/SFX to, or re-render a short-form talking-head video. The cut, transcript, storyboard and sound are Python + ffmpeg; the picture is built and rendered as an HTML composition with the html-edit skill. No NLE.
 ---
 
 # Video edit (talking-head shorts)
@@ -134,7 +134,7 @@ If the project has its own hook/script skills or instructions, use them. After f
    ```
    It uses Apple Vision (built into macOS) and runs at about real time: a 60s video takes about a minute. It is the slowest step of an edit, so start it in the background as soon as the base exists and carry on with the plan and sound while it runs.
    - **Cleaner matte / Linux:** `python3 "$CUTROOM_CORE/engine/personmask.py" base_vN.mp4 540 960 | ffmpeg …` (same pipe). Robust Video Matting: hair strands and steady edges, better than Vision. With `MATTE_URL` + `MATTE_TOKEN` set it runs on the GPU matte service (`$CUTROOM_CORE/engine/matte/modal_matte.py`, ~30s for a 60s reel); without them it falls back to onnxruntime on CPU (minutes; model at `PERSONMASK_MODEL`).
-7. **Build the picture** in the render script (`renderN.py`, from `$CUTROOM_CORE/templates/shorts/render_template.py`):
+7. **Build the picture** as an HTML composition with the `html-edit` skill (`cutroom compose`): every layout, graphic and caption below becomes a graphic file there, with the same look, timing and rules. The Python notes that follow (`renderN.py`, from `$CUTROOM_CORE/templates/shorts/render_template.py`) describe each piece and are the way to build only when the user asks for the Python renderer:
    - `TIMELINE = SB.timeline({beat_id: draw_fn})`, `OVERLAYS = SB.overlays({...})`; animation moments read `SB.cue(name)` (ticks, wipes, submits). **Never hand-type a time that also exists in the storyboard.**
    - Every `click` cue needs a visible press: `C.press(canvas, t - SB.cue(name), x, y)`. Exception: don't animate a press over a real clip that already shows the click.
    - `OVERLAYS` for headers / logo tiles over the face.

@@ -9,7 +9,7 @@ field() {
   [ -f "$credentials" ] && node -e 'try{process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))[process.argv[2]]??""))}catch{}' "$credentials" "$1" 2>/dev/null
 }
 
-if [ -n "$CLAUDE_ENV_FILE" ]; then
+if [ -n "$CLAUDE_ENV_FILE" ] && [ -z "$CUTROOM_CHAT_ID" ]; then
   {
     echo "export CUTROOM_CORE=\"$core\""
     echo "export CUTROOM_ENGINE=\"$core/engine\""

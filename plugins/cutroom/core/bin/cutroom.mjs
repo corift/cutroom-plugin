@@ -21,6 +21,11 @@
  *   cutroom link                          # show where each project lives
  *   cutroom unlink <project>              # forget this Mac's folder for the project
  *   cutroom render "<video folder>" -- python3 edit/render_v2.py   # runs inside the video folder; in the cloud when the account turns it on
+ *   cutroom compose init "<video folder>" <slug> [--size 1080x1920]   # start an HTML edit in edit/<slug>/
+ *   cutroom compose check "<video folder>" <slug>
+ *   cutroom compose frames "<video folder>" <slug> --at 1,8.5,20 [--against edit/old_v3.mp4]   # stills in edit/<slug>/frames
+ *   cutroom compose preview "<video folder>" <slug> [--port 3002]   # live preview with a timeline; --stop ends it
+ *   cutroom compose render "<video folder>" <slug> [--version 3] [--start 12 --end 18]   # writes edit/<slug>_vN.mp4
  *
  * (Run it as `node "$CUTROOM_CORE/bin/cutroom.mjs" …` when `cutroom` isn't on PATH.)
  *
@@ -43,6 +48,10 @@
  * video folder, the project, the account and the core to a cloud sandbox at the same paths, runs
  * it there and brings back every file it wrote in the video folder. --local always runs it here,
  * --include adds another file or folder the command reads.
+ * compose runs an HTML edit (a Hyperframes project in edit/<slug>/: index.html, compositions/,
+ * assets/) through a pinned Hyperframes; it needs Node 22+. A full compose render runs in the cloud
+ * when the account has Render in the cloud on (--local keeps it here). publish render reads the
+ * same folder for the timeline lanes shown in review.
  */
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -83,7 +92,23 @@ const SYNC_VERSION = "1.46.0";
 const POLL_MIN = 3000;
 const POLL_MAX = 30000;
 
-const TEXT_EXT = new Set([".md", ".json", ".txt", ".srt", ".vtt", ".py", ".csv", ".yaml", ".yml"]);
+const TEXT_EXT = new Set([
+  ".md",
+  ".json",
+  ".txt",
+  ".srt",
+  ".vtt",
+  ".py",
+  ".csv",
+  ".yaml",
+  ".yml",
+  ".html",
+  ".css",
+  ".js"
+]);
+const HYPERFRAMES = "hyperframes@0.9.85";
+const COMPOSE = ["init", "check", "frames", "preview", "render"];
+const LANES = ["Footage", "Graphics", "Overlays", "Captions", "Sound"];
 const INLINE_MAX = 512 * 1024;
 const RENDER_ENV = [
   "CUTROOM_HOME",
@@ -97,7 +122,7 @@ const RENDER_ENV = [
 ];
 const RENDER_DONE = new Set(["done", "failed", "canceled"]);
 const SKIP =
-  /(^|\/)(\.DS_Store|\.git|\.cutroom|__pycache__|node_modules|\.review|(?:sullyedit|cutroom)_chunks[^/]*)(\/|$)|\.(tmp|log)$/;
+  /(^|\/)(\.DS_Store|\.git|\.cutroom|\.hyperframes|\.thumbnails|\.transcode-cache|\.waveform-cache|__pycache__|node_modules|\.review|(?:sullyedit|cutroom)_chunks[^/]*)(\/|$)|\.(tmp|log)$/;
 const LARGE_BYTES = 25 * 1024 * 1024;
 const AV = /\.(mp4|mov|m4v|mkv|webm|m4a|mp3|wav|aac|aiff?)$/i;
 const TYPES = {
@@ -121,8 +146,16 @@ const argv = process.argv.slice(2);
 const dashes = argv.indexOf("--");
 const [cmd, ...args] = dashes < 0 ? argv : argv.slice(0, dashes);
 const tail = dashes < 0 ? [] : argv.slice(dashes + 1);
-const LOCAL_ONLY = new Set(["link", "unlink"]);
-const BOOL_FLAGS = new Set(["no-video", "include-media", "text-only", "local", "upload", "wait"]);
+const LOCAL_ONLY = new Set(["link", "unlink", "compose"]);
+const BOOL_FLAGS = new Set([
+  "no-video",
+  "include-media",
+  "text-only",
+  "local",
+  "upload",
+  "wait",
+  "stop"
+]);
 const takesValue = (a) => a?.startsWith("--") && !BOOL_FLAGS.has(a.slice(2));
 const flags = Object.fromEntries(
   args.flatMap((a, i) =>
@@ -152,6 +185,13 @@ try {
   else if (cmd === "scripts") await listScripts(flags.project);
   else if (cmd === "link") link(positional[0], positional[1], flags.videos);
   else if (cmd === "unlink") unlink(positional[0]);
+  else if (cmd === "compose")
+    await compose({
+      action: positional[0],
+      dir: videoDir(positional[1]),
+      slug: positional[2],
+      flags
+    });
   else if (cmd === "render")
     await render(videoDir(positional[0]), tail, {
       local: !!flags.local,
@@ -364,7 +404,10 @@ async function publishOne(kind, dir, fileArg, opts) {
   }
   if (opts.version) version = Number(opts.version);
 
-  const { beats, words } = storyboardOf(F.toLocal(editDir));
+  const { beats, words } = withLayers({
+    ...storyboardOf(F.toLocal(editDir)),
+    composition: kind === "render" ? compositionOf(join(F.toLocal(editDir), stem)) : null
+  });
   const images = [
     [["storyboard_board.jpg", "sully_storyboard_board.jpg"], "Storyboard board"],
     ...(kind === "render" ? [[["cue_check.jpg", "sully_cue_check.jpg"], "Cue check"]] : [])
@@ -856,6 +899,195 @@ function hashCache() {
 }
 
 /* ---------- helpers ---------- */
+
+async function compose({ action, dir, slug, flags }) {
+  if (!COMPOSE.includes(action) || !slug)
+    throw new Error(`compose ${COMPOSE.join("|")} "<video folder>" <slug>`);
+  if (!/^[a-z0-9][a-z0-9_]*$/.test(slug))
+    throw new Error(`the slug names the cut, in lowercase with underscores (got ${slug})`);
+  const edit = F.toLocal(`${dir}/edit`);
+  const home = join(edit, slug);
+  const run = (args) => {
+    const done = spawnSync("npx", ["--yes", HYPERFRAMES, ...args], {
+      cwd: home,
+      stdio: "inherit",
+      env: { ...process.env, HYPERFRAMES_NO_TELEMETRY: "1", DO_NOT_TRACK: "1" }
+    });
+    if (done.error)
+      throw new Error(`could not run npx (Node 22+ is needed): ${done.error.message}`);
+    if (done.status) process.exit(done.status);
+  };
+
+  if (action === "init") {
+    if (existsSync(join(home, "index.html"))) throw new Error(`${home} already has an edit`);
+    const [width, height] = (flags.size ?? "1080x1920").split("x").map(Number);
+    if (!width || !height) throw new Error("--size is WIDTHxHEIGHT, e.g. 1080x1920");
+    const template = join(dirname(dirname(fileURLToPath(import.meta.url))), "templates/compose");
+    for (const abs of listFiles(template)) {
+      const target = join(home, relative(template, abs));
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(
+        target,
+        readFileSync(abs, "utf8").replaceAll("__WIDTH__", width).replaceAll("__HEIGHT__", height)
+      );
+    }
+    mkdirSync(join(home, "assets"), { recursive: true });
+    return console.log(`started ${home}`);
+  }
+
+  if (!existsSync(join(home, "index.html")))
+    throw new Error(`${home}/index.html not found: run compose init first`);
+  if (action === "check") return run(["check"]);
+  if (action === "frames") {
+    if (!flags.at) throw new Error("--at takes the seconds to capture, e.g. --at 1,8.5,20");
+    const against = flags.against && resolve(F.toLocal(dir), flags.against);
+    run([
+      "snapshot",
+      "--at",
+      flags.at,
+      "--no-end",
+      "-o",
+      join(home, "frames"),
+      ...(against ? ["--against", against] : [])
+    ]);
+    return console.log(`frames in ${join(home, "frames")}`);
+  }
+  if (action === "preview") {
+    if (flags.stop) return run(["preview", "--stop"]);
+    return run(["preview", "--background", "--no-open", "--port", String(flags.port ?? 3002)]);
+  }
+
+  const partial = flags.start != null || flags.end != null;
+  const versions = readdirSync(edit).flatMap((name) => {
+    const m = name.match(/^(.+)_v(\d+)\.mp4$/);
+    return m && m[1] === slug ? [Number(m[2])] : [];
+  });
+  const version = Number(flags.version ?? Math.max(0, ...versions) + 1);
+  const out = partial
+    ? join(home, "renders", `part_${flags.start ?? 0}_${flags.end ?? "end"}.mp4`)
+    : join(edit, `${slug}_v${version}.mp4`);
+  if (!partial && !flags.local && CONVEX_URL && KEY) {
+    const cloud = await convex("query", "workspaces:cloudRender", {});
+    if (cloud)
+      return render(
+        dir,
+        [
+          `cd edit/${slug} && HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1 npx --yes ${HYPERFRAMES} render -o ../${slug}_v${version}.mp4 --quiet`
+        ],
+        { local: false, include: [] }
+      );
+  }
+  mkdirSync(dirname(out), { recursive: true });
+  const started = Date.now();
+  run([
+    "render",
+    "-o",
+    out,
+    "--quiet",
+    ...(flags.start != null ? ["--start", String(flags.start)] : []),
+    ...(flags.end != null ? ["--end", String(flags.end)] : [])
+  ]);
+  console.log(`rendered ${out} in ${Math.round((Date.now() - started) / 1000)}s`);
+}
+
+function compositionOf(home) {
+  const file = join(home, "index.html");
+  if (!existsSync(file)) return null;
+  const html = readFileSync(file, "utf8");
+  const round = (seconds) => Math.round(seconds * 1000) / 1000;
+  const attr = (tag, name) => tag.match(new RegExp(`\\s${name}="([^"]*)"`))?.[1];
+  const timed = [...html.matchAll(/<([a-z]+)\b[^>]*\sdata-start="[^"]*"[^>]*>/g)].map(
+    ([tag, element]) => ({
+      element,
+      id: attr(tag, "id") ?? element,
+      t0: Number(attr(tag, "data-start")),
+      t1: round(Number(attr(tag, "data-start")) + Number(attr(tag, "data-duration") ?? 0)),
+      src: attr(tag, "data-composition-src"),
+      kind: attr(tag, "data-track-kind"),
+      layout: attr(tag, "data-layout"),
+      root: !!attr(tag, "data-composition-id") && !attr(tag, "data-composition-src")
+    })
+  );
+  const duration = timed.find((c) => c.root)?.t1 ?? Math.max(0, ...timed.map((c) => c.t1));
+  const clips = timed.filter((c) => !c.root && c.t1 > c.t0).sort((a, b) => a.t0 - b.t0);
+  const lane = (c) =>
+    c.element === "audio"
+      ? "Sound"
+      : c.element === "video"
+        ? "Footage"
+        : c.kind === "captions"
+          ? "Captions"
+          : c.src || c.kind === "graphics"
+            ? "Graphics"
+            : "Overlays";
+  const layers = clips
+    .map((c) => ({ lane: lane(c), label: c.id.replace(/[-_]+/g, " "), t0: c.t0, t1: c.t1 }))
+    .sort((a, b) => LANES.indexOf(a.lane) - LANES.indexOf(b.lane) || a.t0 - b.t0);
+  const scenes = clips.filter((c) => lane(c) === "Graphics");
+  const beats = [];
+  let at = 0;
+  let faces = 0;
+  const face = (t0, t1) =>
+    t1 - t0 > 0.05 &&
+    beats.push({ id: `face_${++faces}`, t0, t1, layout: "face", visual: "", asset: "", cues: [] });
+  for (const scene of scenes) {
+    face(at, scene.t0);
+    beats.push({
+      id: scene.id,
+      t0: scene.t0,
+      t1: scene.t1,
+      layout: scene.layout ?? "inset",
+      visual: "",
+      asset: scene.src ?? "",
+      cues: []
+    });
+    at = Math.max(at, scene.t1);
+  }
+  face(at, duration);
+  const captions = clips.find((c) => c.kind === "captions" && c.src);
+  const captionFile = captions && join(home, captions.src);
+  const words =
+    captionFile && existsSync(captionFile)
+      ? captionWords({ html: readFileSync(captionFile, "utf8"), offset: captions.t0 })
+      : [];
+  return { beats, layers, words };
+}
+
+function captionWords({ html, offset }) {
+  const round = (seconds) => Math.round(seconds * 1000) / 1000;
+  const plain = (text) =>
+    text
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+      .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+      .replace(/&amp;/g, "&")
+      .replace(/&apos;/g, "'")
+      .replace(/&quot;/g, '"')
+      .replace(/&nbsp;/g, " ")
+      .trim();
+  return [...html.matchAll(/<(\w+)\b([^>]*\sdata-s="[^"]*"[^>]*)>([\s\S]*?)<\/\1>/g)].flatMap(
+    ([, , attrs, inner]) => {
+      const s = Number(attrs.match(/\sdata-s="([^"]*)"/)?.[1]);
+      const e = Number(attrs.match(/\sdata-e="([^"]*)"/)?.[1]);
+      const spoken = plain(inner).split(/\s+/).filter(Boolean);
+      if (!spoken.length || !(e > s)) return [];
+      const each = (e - s) / spoken.length;
+      return spoken.map((w, i) => ({
+        w,
+        s: round(offset + s + each * i),
+        e: round(offset + s + each * (i + 1))
+      }));
+    }
+  );
+}
+
+function withLayers({ beats, words, composition }) {
+  if (!composition) return { beats, words };
+  const spoken = words.length ? words : composition.words;
+  const [first, ...rest] = beats.length ? beats : composition.beats;
+  if (!first) return { beats, words: spoken };
+  return { beats: [{ ...first, layers: composition.layers }, ...rest], words: spoken };
+}
 
 function renderName(file) {
   const m = file.match(/^(.+?)(?:_v(\d+))?\.mp4$/);

@@ -5,7 +5,7 @@ description: How Claude edits videos with Cutroom - where video folders live, wh
 
 # Editing with Cutroom
 
-You are the editor: the user records, you cut, storyboard, render and revise, and they review in the browser at cutroom.so. Everything is code (Python + ffmpeg); there is no NLE.
+You are the editor: the user records, you cut, storyboard, render and revise, and they review in the browser at cutroom.so. Everything is code: the cut is ffmpeg and Python, and every reel is drawn and rendered as an HTML composition with the `html-edit` skill. There is no NLE.
 
 If the session-start note says Cutroom isn't set up, run the `cutroom:setup` skill first.
 
@@ -32,7 +32,7 @@ The CLI takes a Cutroom path (`projects/<project>/videos/<name>`) or the video f
 ## How work flows
 
 1. **New recording**: make `videos/<YYYY-MM-DD-slug>/`, put the raw file there, and the script as `script.md` if there is one. If it's unclear which video a file belongs to, ask.
-2. **Edit** with the skill the project's instructions name, from the project's skills (`basic-video-edit` for a plain cut + captions works anywhere). Read the project context first.
+2. **Edit** with the skill the project's instructions name, from the project's skills (`basic-video-edit` for a plain cut + captions works anywhere). Read the project context first. That skill decides the cut, the storyboard, the look and the sound. **Build and render with `html-edit`, always**: graphics, layouts, captions and the final render are an HTML composition (`node "$CUTROOM_CORE/bin/cutroom.mjs" compose`), also where the project's skill describes a Python render script. Draw with the Python engine only when the user asks for it in this chat.
 3. **Transcription** runs inside the engine. It extracts a small mono MP3 locally and sends only that to Cutroom (ElevenLabs Scribe), so the video never leaves the machine. Recordings over about 40 minutes need splitting first.
 4. **Storyboard gate (always)**: before building, publish the storyboard and wait for notes. Run it in the background:
    `node "$CUTROOM_CORE/bin/cutroom.mjs" publish storyboard "projects/<project>/videos/<name>" edit/base_vN.mp4 --wait`
