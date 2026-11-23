@@ -440,12 +440,25 @@ def write(home, look, base, matte=None):
     return layers
 
 
+def reason(lines):
+    lines = [x for x in lines if x and not x.startswith("npm notice")]
+    failed = next((i for i, x in enumerate(lines) if x.startswith("✗")), None)
+    if failed is None: return lines[-1] if lines else ""
+    return " ".join(" ".join(lines[failed:failed + 2]).lstrip("✗ ").split())[:300]
+
+
 def render(home, out):
     home = os.path.abspath(home)
     silent = os.path.join(home, "render.mp4")
-    env = {**os.environ, "HYPERFRAMES_NO_TELEMETRY": "1", "DO_NOT_TRACK": "1"}
-    subprocess.run(["npx", "--yes", pinned(), "render", "-o", silent, "--quiet"], cwd=home, env=env, check=True,
-                   stdout=sys.stderr, stdin=subprocess.DEVNULL)
+    env = {**os.environ, "HYPERFRAMES_NO_TELEMETRY": "1", "DO_NOT_TRACK": "1", "NPM_CONFIG_UPDATE_NOTIFIER": "false"}
+    p = subprocess.Popen(["npx", "--yes", pinned(), "render", "-o", silent, "--quiet"], cwd=home, env=env,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True)
+    said = []
+    for line in p.stdout:
+        sys.stderr.write(line)
+        said = [*said[-40:], line.strip()]
+    if p.wait():
+        raise RuntimeError(reason(said) or f"hyperframes exited with {p.returncode}")
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", silent, "-i", os.path.join(home, "assets", "base.mp4"), "-map", "0:v",
                     "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-shortest", "-movflags", "+faststart", out],
                    check=True)

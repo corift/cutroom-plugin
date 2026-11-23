@@ -542,6 +542,7 @@ def render(video):
     n = next_version(video)
     out = path(video, f"cut_v{n}.mp4")
     drawn = renderer()
+    fallback = None
     if drawn == "html":
         from . import htmlcut
         home = path(video, "cut")
@@ -551,6 +552,7 @@ def render(video):
         except Exception as error:
             print(f"the html render failed, drawing with pillow instead: {error}", file=sys.stderr)
             drawn = "pillow"
+            fallback = str(error)[:300]
             if not os.path.exists(base): os.replace(os.path.join(home, "assets", "base.mp4"), base)
     if drawn == "pillow":
         draw(look, base, mask, out)
@@ -562,7 +564,8 @@ def render(video):
         cut = set(edit["cut"])
         f.write("\n".join(s["text"] for s in sentences if s["id"] not in cut) + "\n")
     return {"file": f"edit/cut_v{n}.mp4", "version": n, "duration": round(total, 1),
-            "footage": round(probe_duration(src), 1), "cuts": len(segs) - 1, "size": list(size), "renderer": drawn}
+            "footage": round(probe_duration(src), 1), "cuts": len(segs) - 1, "size": list(size), "renderer": drawn,
+            **({"fallback": fallback} if fallback else {})}
 
 def draw(look, base, mask, out):
     w, h = look["size"]

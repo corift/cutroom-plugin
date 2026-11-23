@@ -193,7 +193,9 @@ try {
       flags
     });
   else if (cmd === "render")
-    await render(videoDir(positional[0]), tail, {
+    await render({
+      dir: videoDir(positional[0]),
+      words: tail,
       local: !!flags.local,
       include: args.flatMap((a, i) => (args[i - 1] === "--include" ? [a] : []))
     });
@@ -724,7 +726,7 @@ function followReviewEvents({ after: since, onEvents, onError }) {
   };
 }
 
-async function render(dir, words, { local, include }) {
+async function render({ dir, words, local, include, inputs }) {
   if (!words.length) throw new Error('what to run? cutroom render "<video folder>" -- python3 …');
   const command =
     words.length === 1 ? words[0] : words.map((w) => `'${w.replace(/'/g, `'\\''`)}'`).join(" ");
@@ -734,23 +736,8 @@ async function render(dir, words, { local, include }) {
     const done = spawnSync("bash", ["-c", command], { stdio: "inherit", cwd: video });
     process.exit(done.status ?? 1);
   }
-  const slug = dir.split("/")[1];
   const core = process.env.CUTROOM_CORE ?? dirname(dirname(fileURLToPath(import.meta.url)));
-  const videos = F.toLocal(`projects/${slug}/videos`);
-  const inside = (abs, root) => abs === root || abs.startsWith(`${root}/`);
-  const projectRoot = F.toLocal(`projects/${slug}`);
-  const project = existsSync(projectRoot)
-    ? listFiles(projectRoot).filter((abs) => !inside(abs, videos))
-    : [];
-  const account = existsSync(F.toLocal("account")) ? listFiles(F.toLocal("account")) : [];
-  const extra = include.flatMap((p) => {
-    const abs = resolve(process.cwd(), p);
-    if (!existsSync(abs)) throw new Error(`--include ${p}: not found`);
-    return statSync(abs).isDirectory() ? listFiles(abs) : [abs];
-  });
-  const paths = [
-    ...new Set([...listFiles(video), ...project, ...account, ...listFiles(core), ...extra])
-  ];
+  const paths = inputs ?? renderInputs({ dir, core, include });
 
   const cache = hashCache();
   const files = [];
@@ -787,10 +774,14 @@ async function render(dir, words, { local, include }) {
   if (sent) console.log(`uploaded ${mb(sent)}`);
 
   const env = Object.fromEntries(
-    RENDER_ENV.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : []))
+    (inputs ? [] : RENDER_ENV).flatMap((name) =>
+      process.env[name] ? [[name, process.env[name]]] : []
+    )
   );
-  env.CUTROOM_CORE = core;
-  env.PYTHONPATH = join(core, "engine");
+  if (!inputs) {
+    env.CUTROOM_CORE = core;
+    env.PYTHONPATH = join(core, "engine");
+  }
   const renderId = await convex("mutation", "renders:start", {
     command,
     cwd: video,
@@ -834,6 +825,25 @@ async function render(dir, words, { local, include }) {
   }
 }
 
+function renderInputs({ dir, core, include }) {
+  const slug = dir.split("/")[1];
+  const videos = F.toLocal(`projects/${slug}/videos`);
+  const inside = (abs, root) => abs === root || abs.startsWith(`${root}/`);
+  const projectRoot = F.toLocal(`projects/${slug}`);
+  const project = existsSync(projectRoot)
+    ? listFiles(projectRoot).filter((abs) => !inside(abs, videos))
+    : [];
+  const account = existsSync(F.toLocal("account")) ? listFiles(F.toLocal("account")) : [];
+  const extra = include.flatMap((p) => {
+    const abs = resolve(process.cwd(), p);
+    if (!existsSync(abs)) throw new Error(`--include ${p}: not found`);
+    return statSync(abs).isDirectory() ? listFiles(abs) : [abs];
+  });
+  return [
+    ...new Set([...listFiles(F.toLocal(dir)), ...project, ...account, ...listFiles(core), ...extra])
+  ];
+}
+
 async function retrying(send, tries = 5) {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -851,6 +861,7 @@ async function bringBack(video, outputs, cache) {
   const wanted = [];
   for (const o of outputs) {
     if (!o.path.startsWith(`${video}/`) || o.path.split("/").includes("..")) continue;
+    if (SKIP.test(o.path.slice(video.length + 1))) continue;
     if (existsSync(o.path) && (await cache.hash(o.path)).sha256 === o.sha256) continue;
     wanted.push(o);
   }
@@ -911,7 +922,12 @@ async function compose({ action, dir, slug, flags }) {
     const done = spawnSync("npx", ["--yes", HYPERFRAMES, ...args], {
       cwd: home,
       stdio: "inherit",
-      env: { ...process.env, HYPERFRAMES_NO_TELEMETRY: "1", DO_NOT_TRACK: "1" }
+      env: {
+        ...process.env,
+        HYPERFRAMES_NO_TELEMETRY: "1",
+        DO_NOT_TRACK: "1",
+        NPM_CONFIG_UPDATE_NOTIFIER: "false"
+      }
     });
     if (done.error)
       throw new Error(`could not run npx (Node 22+ is needed): ${done.error.message}`);
@@ -969,13 +985,15 @@ async function compose({ action, dir, slug, flags }) {
   if (!partial && !flags.local && CONVEX_URL && KEY) {
     const cloud = await convex("query", "workspaces:cloudRender", {});
     if (cloud)
-      return render(
+      return render({
         dir,
-        [
-          `cd edit/${slug} && HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1 npx --yes ${HYPERFRAMES} render -o ../${slug}_v${version}.mp4 --quiet`
+        words: [
+          `cd edit/${slug} && HYPERFRAMES_NO_TELEMETRY=1 DO_NOT_TRACK=1 NPM_CONFIG_UPDATE_NOTIFIER=false npx --yes ${HYPERFRAMES} render -o ../${slug}_v${version}.mp4 --quiet`
         ],
-        { local: false, include: [] }
-      );
+        local: false,
+        include: [],
+        inputs: composeInputs({ video: F.toLocal(dir), home })
+      });
   }
   mkdirSync(dirname(out), { recursive: true });
   const started = Date.now();
@@ -988,6 +1006,20 @@ async function compose({ action, dir, slug, flags }) {
     ...(flags.end != null ? ["--end", String(flags.end)] : [])
   ]);
   console.log(`rendered ${out} in ${Math.round((Date.now() - started) / 1000)}s`);
+}
+
+function composeInputs({ video, home }) {
+  const own = listFiles(home).filter((abs) => !/^(frames|renders)\//.test(relative(home, abs)));
+  const linked = own
+    .filter((abs) => /\.html?$/.test(abs))
+    .flatMap((page) =>
+      [...readFileSync(page, "utf8").matchAll(/\b(?:src|href)="([^"#?:]+)"/g)].map(([, ref]) =>
+        resolve(dirname(page), ref)
+      )
+    )
+    .filter((abs) => abs.startsWith(`${video}/`) && !abs.startsWith(`${home}/`) && existsSync(abs))
+    .flatMap((abs) => (statSync(abs).isDirectory() ? [] : [abs]));
+  return [...new Set([...own, ...linked])];
 }
 
 function compositionOf(home) {
