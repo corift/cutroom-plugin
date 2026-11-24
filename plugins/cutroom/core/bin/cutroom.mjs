@@ -57,7 +57,7 @@
  * same folder for the timeline lanes shown in review.
  * live syncs an HTML edit for the live preview on other devices: its text files, its assets, and
  * a small preview encode of each video it plays (in .live/ beside the video). It sends nothing
- * from outside edit/ and no file over 16 MB; when anything is left out, Cutroom plays the MP4.
+ * from outside edit/; when anything is left out, Cutroom plays the MP4.
  * publish live posts the next version of edit/<slug>/ for review with no MP4: Cutroom plays the
  * edit itself, and the Render button (or compose render, then publish render) adds the MP4 to that
  * same version. compose render numbers its output after that version. publish render and
@@ -149,7 +149,6 @@ const RENDER_DONE = new Set(["done", "failed", "canceled"]);
 const SKIP =
   /(^|\/)(\.DS_Store|\.git|\.cutroom|\.hyperframes|\.thumbnails|\.transcode-cache|\.waveform-cache|__pycache__|node_modules|\.review|\.live|(?:sullyedit|cutroom)_chunks[^/]*)(\/|$)|\.(tmp|log)$/;
 const LARGE_BYTES = 25 * 1024 * 1024;
-const LIVE_MAX_BYTES = 16 * 1024 * 1024;
 const LIVE_PREVIEWED = /\.(mp4|mov|m4v)$/i;
 const LIVE_LEFT_OUT = /^(frames|renders)\//;
 const LIVE_REF = /\b(?:src|href)=["']([^"'#?]+)/g;
@@ -410,7 +409,7 @@ async function pushLive({ dir, slug }) {
   const paths = [];
   for (const path of new Set([...files, ...refs])) {
     const source = LIVE_PREVIEWED.test(path) ? livePreview(path) : path;
-    if (source && statSync(F.toLocal(source)).size <= LIVE_MAX_BYTES) paths.push(source);
+    if (source) paths.push(source);
     else missing.push(path);
   }
   const hashes = await push(dir, null, { paths });

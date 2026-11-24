@@ -39,7 +39,7 @@ edit/<slug>_vN.mp4        renders (publish these as usual)
    - Images, logos and fonts the graphics use. Reference everything as `assets/...`.
 3. Write `index.html` and one file per graphic. Set the root `data-duration` to the reel's length.
 4. `compose check`, then `compose frames` at the middle of every beat and 0.1s after every cue. Read the frames and fix what's off before rendering.
-5. Write the caption and script files (`edit/<slug>.caption.md`, `edit/<slug>.script.md`), then `publish live "videos/<name>" <slug>` and stop. The user watches the page itself in the app; the review timeline shows its footage, graphics, captions and sound as lanes. Every file the page uses must sit inside `edit/<slug>/` and video files must stay under 16 MB each (the A-roll plays from its 720p preview).
+5. Write the caption and script files (`edit/<slug>.caption.md`, `edit/<slug>.script.md`), then `publish live "videos/<name>" <slug>` and stop. The user watches the page itself in the app; the review timeline shows its footage, graphics, captions and sound as lanes. Every file the page uses must sit inside `edit/<slug>/` (the A-roll plays from its 720p preview).
 6. Each round of notes: edit the HTML, re-check the frames you touched, `publish live` again for the next version.
 7. Render only when the user asks for the video file (download, export, save, post): `compose render "videos/<name>" <slug>`, then `publish render "videos/<name>" edit/<slug>_vN.mp4`. It lands on the latest live version, not a new one. The Render button in the app does the same on the user's Mac.
 
