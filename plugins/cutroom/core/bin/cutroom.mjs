@@ -27,6 +27,7 @@
  *   cutroom compose preview "<video folder>" <slug> [--port 3002]   # live preview with a timeline; --stop ends it
  *   cutroom compose render "<video folder>" <slug> [--version 3] [--start 12 --end 18]   # writes edit/<slug>_vN.mp4
  *   cutroom compose hyperframes "<video folder>" <slug> -- catalog --query "glitch" --json   # any other Hyperframes command, pinned
+ *   cutroom live "<video folder>" <slug>   # sync edit/<slug>/ so it plays live on cutroom.so and other devices
  *
  * (Run it as `node "$CUTROOM_CORE/bin/cutroom.mjs" …` when `cutroom` isn't on PATH.)
  *
@@ -53,6 +54,10 @@
  * assets/) through a pinned Hyperframes; it needs Node 22+. A full compose render runs in the cloud
  * when the account has Render in the cloud on (--local keeps it here). publish render reads the
  * same folder for the timeline lanes shown in review.
+ * live syncs an HTML edit for the live preview on other devices: its text files, its assets, and
+ * a small preview encode of each video it plays (in .live/ beside the video). It sends nothing
+ * from outside edit/ and no file over 40 MB; when anything is left out, Cutroom plays the MP4.
+ * publish render runs it for the version's edit, and the desktop app runs it when the edit changes.
  */
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -138,8 +143,12 @@ const RENDER_ENV = [
 ];
 const RENDER_DONE = new Set(["done", "failed", "canceled"]);
 const SKIP =
-  /(^|\/)(\.DS_Store|\.git|\.cutroom|\.hyperframes|\.thumbnails|\.transcode-cache|\.waveform-cache|__pycache__|node_modules|\.review|(?:sullyedit|cutroom)_chunks[^/]*)(\/|$)|\.(tmp|log)$/;
+  /(^|\/)(\.DS_Store|\.git|\.cutroom|\.hyperframes|\.thumbnails|\.transcode-cache|\.waveform-cache|__pycache__|node_modules|\.review|\.live|(?:sullyedit|cutroom)_chunks[^/]*)(\/|$)|\.(tmp|log)$/;
 const LARGE_BYTES = 25 * 1024 * 1024;
+const LIVE_MAX_BYTES = 16 * 1024 * 1024;
+const LIVE_PREVIEWED = /\.(mp4|mov|m4v)$/i;
+const LIVE_LEFT_OUT = /^(frames|renders)\//;
+const LIVE_REF = /\b(?:src|href)=["']([^"'#?]+)/g;
 const AV = /\.(mp4|mov|m4v|mkv|webm|m4a|mp3|wav|aac|aiff?)$/i;
 const TYPES = {
   ".mp4": "video/mp4",
@@ -194,6 +203,7 @@ try {
   else if (cmd === "pull") await pull(folder(positional[0]));
   else if (cmd === "publish")
     await publish(positional[0], videoDir(positional[1]), positional.slice(2), flags);
+  else if (cmd === "live") await pushLive({ dir: videoDir(positional[0]), slug: positional[1] });
   else if (cmd === "final") await promoteFinal(videoDir(positional[0]), positional.slice(1));
   else if (cmd === "wait") await waitFor(videoDir(positional[0]), flags.kind);
   else if (cmd === "watch") await watch(positional[0] && videoDir(positional[0]));
@@ -227,7 +237,7 @@ try {
 
 /* ---------- commands ---------- */
 
-async function push(dir, only, { includeMedia = false, textOnly = false, extra = [] } = {}) {
+async function push(dir, only, { includeMedia = false, textOnly = false, extra = [], paths } = {}) {
   const skipped = [];
   const keep = (p) => {
     if (textOnly) return TEXT_EXT.has(extname(p).toLowerCase());
@@ -238,7 +248,7 @@ async function push(dir, only, { includeMedia = false, textOnly = false, extra =
     }
     return true;
   };
-  const local = [
+  const local = paths ?? [
     ...new Set([
       ...listFiles(F.toLocal(dir))
         .map((abs) => F.toCutroom(abs))
@@ -256,15 +266,20 @@ async function push(dir, only, { includeMedia = false, textOnly = false, extra =
   );
 
   const changed = [];
+  const hashes = [];
   for (const path of local) {
     const abs = F.toLocal(path);
     const { size, sha256 } = await settledHash(abs);
+    hashes.push(`${path}:${sha256}`);
     if (remote.get(path)?.sha256 === sha256) continue;
     const contentType = TYPES[extname(path).toLowerCase()] ?? "application/octet-stream";
     const inline = TEXT_EXT.has(extname(path).toLowerCase()) && size <= INLINE_MAX;
     changed.push({ path, abs, size, sha256, contentType, inline });
   }
-  if (!changed.length) return console.log(`${dir}: up to date (${local.length} files)`);
+  if (!changed.length) {
+    console.log(`${dir}: up to date (${local.length} files)`);
+    return hashes;
+  }
 
   const media = changed.filter((f) => !f.inline);
   const known = new Set(
@@ -312,6 +327,7 @@ async function push(dir, only, { includeMedia = false, textOnly = false, extra =
     await convex("mutation", "files:commit", { files: rows.slice(i, i + 40) });
   }
   console.log(`${dir}: pushed ${changed.length} changed files, uploaded ${mb(uploaded)}`);
+  return hashes;
 }
 
 async function fetchTexts(files) {
@@ -376,6 +392,87 @@ async function pull(dir, { only } = {}) {
     downloaded += f.size;
   }
   console.log(`${dir}: pulled ${stale.length} files, downloaded ${mb(downloaded)}`);
+}
+
+async function pushLive({ dir, slug }) {
+  if (!slug) throw new Error('which edit? e.g. cutroom live "<video folder>" my_reel');
+  const comp = `${dir}/edit/${slug}`;
+  if (!F.exists(`${comp}/index.html`)) throw new Error(`${comp}/index.html not found`);
+  const files = listFiles(F.toLocal(comp))
+    .map((abs) => F.toCutroom(abs))
+    .filter((path) => !LIVE_LEFT_OUT.test(path.slice(comp.length + 1)));
+  const missing = [];
+  const refs = liveRefs({ dir, comp, files, missing });
+  const paths = [];
+  for (const path of new Set([...files, ...refs])) {
+    const source = LIVE_PREVIEWED.test(path) ? livePreview(path) : path;
+    if (source && statSync(F.toLocal(source)).size <= LIVE_MAX_BYTES) paths.push(source);
+    else missing.push(path);
+  }
+  const hashes = await push(dir, null, { paths });
+  const stamp = createHash("sha256")
+    .update([...hashes.sort(), ...missing.sort()].join("\n"))
+    .digest("hex")
+    .slice(0, 16);
+  await convex("mutation", "lives:set", { path: comp, stamp, complete: !missing.length });
+  if (missing.length)
+    console.log(`${comp}: plays as the MP4 elsewhere; left out ${missing.join(", ")}`);
+  else console.log(`${comp}: plays live on cutroom.so`);
+}
+
+function liveRefs({ dir, comp, files, missing }) {
+  const edit = `${dir}/edit/`;
+  const decode = (ref) => {
+    try {
+      return decodeURIComponent(ref);
+    } catch {
+      return ref;
+    }
+  };
+  const refs = files
+    .filter((path) => extname(path) === ".html")
+    .flatMap((page) =>
+      [...readFileSync(F.toLocal(page), "utf8").matchAll(LIVE_REF)]
+        .map(([, ref]) => ref.trim())
+        .filter((ref) => ref && !/^([a-z][\w+.-]*:|\/)/i.test(ref))
+        .map((ref) => {
+          const candidates = [join(comp, decode(ref)), join(dirname(page), decode(ref))];
+          return (
+            candidates.find((path) => path.startsWith(edit) && F.exists(path)) ?? candidates[0]
+          );
+        })
+    );
+  return [...new Set(refs)].filter((path) => {
+    if (path.startsWith(edit) && F.exists(path)) return true;
+    missing.push(path);
+    return false;
+  });
+}
+
+function livePreview(path) {
+  const source = F.toLocal(path);
+  const target = join(dirname(source), ".live", basename(path));
+  if (existsSync(target) && statSync(target).mtimeMs >= statSync(source).mtimeMs)
+    return F.toCutroom(target);
+  mkdirSync(dirname(target), { recursive: true });
+  const partial = `${target}.part.mp4`;
+  process.stdout.write(`  making the live preview of ${basename(path)}\n`);
+  const run = spawnSync(
+    process.env.CUTROOM_FFMPEG ?? "ffmpeg",
+    [
+      ["-y", "-v", "error", "-i", source],
+      ["-vf", "scale='if(gt(iw,ih),-2,min(720,iw))':'if(gt(iw,ih),min(720,ih),-2)'"],
+      ["-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-g", "30"],
+      ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", partial]
+    ].flat(),
+    { stdio: ["ignore", "ignore", "pipe"] }
+  );
+  if (run.error || run.status !== 0 || !statSync(partial, { throwIfNoEntry: false })?.size) {
+    rmSync(partial, { force: true });
+    return null;
+  }
+  renameSync(partial, target);
+  return F.toCutroom(target);
 }
 
 /**
@@ -465,6 +562,10 @@ async function publishOne(kind, dir, fileArg, opts) {
     ...(process.env.CUTROOM_CHAT_ID ? { chatId: process.env.CUTROOM_CHAT_ID } : {})
   });
   console.log(`published ${kind} ${stem} v${version} → review ${id}`);
+  if (kind === "render" && F.exists(`${editDir}/${stem}/index.html`))
+    await pushLive({ dir, slug: stem }).catch((error) =>
+      console.log(`  live preview not synced: ${error.message}`)
+    );
 }
 
 function reviewCopy(video) {
