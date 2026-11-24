@@ -18,7 +18,7 @@ UGC="$CUTROOM_CORE/engine/cutroom/ugc/ugc_edit.py"
 HTML="$CUTROOM_CORE/engine/cutroom/ugc/render_html.py"
 ```
 
-Work inside the video's folder (`videos/<YYYY-MM-DD-slug>/`), with edit work in `edit/`. Review goes through Cutroom like every other edit: publish the shot map / stills as a storyboard where it fits, and every finished cut with `node "$CUTROOM_CORE/bin/cutroom.mjs" publish render "videos/<name>" edit/<slug>_vN.mp4`.
+Work inside the video's folder (`videos/<YYYY-MM-DD-slug>/`), with edit work in `edit/`. Review goes through Cutroom like every other edit: publish the shot map / stills as a storyboard where it fits, and every finished cut live with `node "$CUTROOM_CORE/bin/cutroom.mjs" publish live "videos/<name>" <slug>` (render and `publish render` only when the user asks for the file).
 
 ## The full spec-ad flow (worked example: a Northern Fitness spec ad)
 

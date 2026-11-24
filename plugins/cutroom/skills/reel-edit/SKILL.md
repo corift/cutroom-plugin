@@ -80,7 +80,7 @@ Everything in this look is set in TikTok Sans, which ships with Cutroom (`assets
    - **Gate:** no caption over the chin or under a card, no burned-in text from the source showing (hide it with a `punch` or `blur`), no section without a camera change.
 5. **Render**, then watch it at phone size.
    - **Gate:** every transition has a sound, nothing pops in silence on a big hit, the CTA is readable for at least 1.5s.
-6. **Publish** the render for review: `node "$CUTROOM_CORE/bin/cutroom.mjs" publish render "videos/<name>" edit/reel_vN.mp4`. Notes become the next version. Variations (other hooks, CTAs, lengths) stay in this same video folder with their own slug: `publish render "videos/<name>" edit/trials_v1.mp4 edit/buy_now_v1.mp4`, never a new `videos/` folder.
+6. **Publish** the edit live for review: `node "$CUTROOM_CORE/bin/cutroom.mjs" publish live "videos/<name>" reel`. Notes become the next version. Render and `publish render` only when the user asks for the file. Variations (other hooks, CTAs, lengths) stay in this same video folder with their own slug (`publish live "videos/<name>" trials`), never a new `videos/` folder.
 
 ## Rhythm rules
 

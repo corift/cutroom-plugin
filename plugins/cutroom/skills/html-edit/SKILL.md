@@ -24,7 +24,8 @@ edit/<slug>_vN.mp4        renders (publish these as usual)
 | `$CR compose init "videos/<name>" <slug>` | start the folder (`--size 1920x1080` for landscape) |
 | `$CR compose check "videos/<name>" <slug>` | lint, layout and audio checks. Fix every error before rendering |
 | `$CR compose frames "videos/<name>" <slug> --at 1,8.5,20` | stills in `edit/<slug>/frames/`; Read them. `--against edit/other_v3.mp4` pairs each with a reference |
-| `$CR compose render "videos/<name>" <slug>` | writes the next `edit/<slug>_vN.mp4`. `--start 12 --end 18` renders just that span to `edit/<slug>/renders/` for a quick look |
+| `$CR publish live "videos/<name>" <slug>` | publishes the edit for review as a live preview, no render. Every version starts this way |
+| `$CR compose render "videos/<name>" <slug>` | only when the user wants the MP4: writes `edit/<slug>_vN.mp4` for the latest live version (then `publish render` it). `--start 12 --end 18` renders just that span to `edit/<slug>/renders/` for a quick look |
 | `$CR compose preview "videos/<name>" <slug>` | a live preview with a timeline at http://localhost:3002 for the user; `--stop` ends it |
 | `$CR compose hyperframes "videos/<name>" <slug> -- <command>` | any other HyperFrames command, pinned and with telemetry off: `catalog --query "film grain" --json`, `add <name> --json`, `lint`, `timeline --json` |
 
@@ -38,8 +39,9 @@ edit/<slug>_vN.mp4        renders (publish these as usual)
    - Images, logos and fonts the graphics use. Reference everything as `assets/...`.
 3. Write `index.html` and one file per graphic. Set the root `data-duration` to the reel's length.
 4. `compose check`, then `compose frames` at the middle of every beat and 0.1s after every cue. Read the frames and fix what's off before rendering.
-5. `compose render`, write the caption and script files beside the render, then `publish render "videos/<name>" edit/<slug>_v1.mp4` and stop. The review timeline shows the page's footage, graphics, captions and sound as lanes.
-6. Each round of notes: edit the HTML, re-check the frames you touched, render the next version, publish.
+5. Write the caption and script files (`edit/<slug>.caption.md`, `edit/<slug>.script.md`), then `publish live "videos/<name>" <slug>` and stop. The user watches the page itself in the app; the review timeline shows its footage, graphics, captions and sound as lanes. Every file the page uses must sit inside `edit/<slug>/` and video files must stay under 16 MB each (the A-roll plays from its 720p preview).
+6. Each round of notes: edit the HTML, re-check the frames you touched, `publish live` again for the next version.
+7. Render only when the user asks for the video file (download, export, save, post): `compose render "videos/<name>" <slug>`, then `publish render "videos/<name>" edit/<slug>_vN.mp4`. It lands on the latest live version, not a new one. The Render button in the app does the same on the user's Mac.
 
 ## The page (`index.html`)
 

@@ -9,6 +9,7 @@
  *
  *   cutroom push "projects/shorts/videos/2026-10-11-gemini-argon" [--only edit/] [--include-media]
  *   cutroom pull "projects/shorts/videos/2026-10-11-gemini-argon"     (or any folder: "projects/shorts", "account")
+ *   cutroom publish live "<video folder>" <slug> [--wait]   # an HTML edit for review, no render
  *   cutroom publish storyboard "<video folder>" edit/base_v1.mp4
  *   cutroom publish render "<video folder>" edit/gemini_argon_reel_v2.mp4 [--wait]
  *   cutroom publish render "<video folder>" edit/trials_v1.mp4 edit/buy_now_v1.mp4   # variations of one video
@@ -56,8 +57,11 @@
  * same folder for the timeline lanes shown in review.
  * live syncs an HTML edit for the live preview on other devices: its text files, its assets, and
  * a small preview encode of each video it plays (in .live/ beside the video). It sends nothing
- * from outside edit/ and no file over 40 MB; when anything is left out, Cutroom plays the MP4.
- * publish render runs it for the version's edit, and the desktop app runs it when the edit changes.
+ * from outside edit/ and no file over 16 MB; when anything is left out, Cutroom plays the MP4.
+ * publish live posts the next version of edit/<slug>/ for review with no MP4: Cutroom plays the
+ * edit itself, and the Render button (or compose render, then publish render) adds the MP4 to that
+ * same version. compose render numbers its output after that version. publish render and
+ * publish live run live, and the desktop app runs it when the edit changes.
  */
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -418,6 +422,51 @@ async function pushLive({ dir, slug }) {
   if (missing.length)
     console.log(`${comp}: plays as the MP4 elsewhere; left out ${missing.join(", ")}`);
   else console.log(`${comp}: plays live on cutroom.so`);
+  return !missing.length;
+}
+
+async function liveVersionOf({ dir, slug }) {
+  const review = (await convex("query", "reviews:list", {})).find(
+    (r) => r.dir === dir && r.kind === "render" && r.stem === slug
+  );
+  return { latest: review?.latest ?? 0, live: !!review?.live && !review.file };
+}
+
+async function publishLive({ dir, slug, opts }) {
+  if (!slug) throw new Error('which edit? e.g. cutroom publish live "<video folder>" my_reel');
+  const comp = `${dir}/edit/${slug}`;
+  if (!F.exists(`${comp}/index.html`)) throw new Error(`${comp}/index.html not found`);
+  const complete = await pushLive({ dir, slug });
+  if (!complete)
+    throw new Error(
+      `${comp} can't play live (see above): move those files into edit/${slug}/assets/ or render it`
+    );
+  const version = Number(opts.version ?? (await liveVersionOf({ dir, slug })).latest + 1);
+  const { beats, words } = withLayers({
+    ...storyboardOf(F.toLocal(`${dir}/edit`)),
+    composition: compositionOf(F.toLocal(comp))
+  });
+  const copy = Object.fromEntries(
+    ["caption", "script"]
+      .map((field) => [field, `${dir}/edit/${slug}.${field}.md`])
+      .filter(([, path]) => F.exists(path))
+      .map(([field, path]) => [field, readFileSync(F.toLocal(path), "utf8").trim()])
+  );
+  await push(dir, "edit/", { textOnly: true });
+  const id = await convex("mutation", "reviews:publish", {
+    videoPath: dir,
+    kind: "render",
+    stem: slug,
+    version,
+    video: "",
+    live: comp,
+    beats,
+    words,
+    ...copy,
+    ...(opts.title ? { title: opts.title } : {}),
+    ...(process.env.CUTROOM_CHAT_ID ? { chatId: process.env.CUTROOM_CHAT_ID } : {})
+  });
+  console.log(`published live ${slug} v${version} → review ${id} (no render)`);
 }
 
 function liveRefs({ dir, comp, files, missing }) {
@@ -480,8 +529,14 @@ function livePreview(path) {
  * Storyboards read beats + transcript from edit/storyboard.json.
  */
 async function publish(kind, dir, files, opts) {
+  if (kind === "live") {
+    const publishedAt = Date.now();
+    await publishLive({ dir, slug: files[0], opts });
+    if (opts.wait) await waitFor(dir, "render", publishedAt);
+    return;
+  }
   if (kind !== "render" && kind !== "storyboard")
-    throw new Error("publish render|storyboard <video dir> <file>…");
+    throw new Error("publish live|render|storyboard <video dir> <file>…");
   if (!files.length) throw new Error("which file? e.g. edit/my_video_v2.mp4");
   if (files.length > 1 && kind === "storyboard")
     throw new Error("a video has one storyboard: publish one file");
@@ -1104,7 +1159,10 @@ async function compose({ action, dir, slug, flags, tail }) {
     const m = name.match(/^(.+)_v(\d+)\.mp4$/);
     return m && m[1] === slug ? [Number(m[2])] : [];
   });
-  const version = Number(flags.version ?? Math.max(0, ...versions) + 1);
+  const live = CONVEX_URL && KEY ? await liveVersionOf({ dir, slug }).catch(() => null) : null;
+  const version = Number(
+    flags.version ?? (live?.live ? live.latest : Math.max(0, ...versions, live?.latest ?? 0) + 1)
+  );
   const out = partial
     ? join(home, "renders", `part_${flags.start ?? 0}_${flags.end ?? "end"}.mp4`)
     : join(edit, `${slug}_v${version}.mp4`);

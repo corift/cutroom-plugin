@@ -161,7 +161,7 @@ If the project has its own hook/script skills or instructions, use them. After f
    - Fonts load from memory (`core.font`); a path-loaded FreeType face shares its file handle across forked workers and crashes with "invalid stream operation". Don't call `ImageFont.truetype(path)` directly in render scripts; use `core.font`.
    - **Upload-ready by default:** renders encode at 10,000 kbps H.264 for 1080x1920 (`core.BITRATE`, scaled by pixel count for other sizes through `parallel.render(..., size=(w, h))`) with AAC audio, the plain IG/TikTok upload rate (platforms re-encode to ~3–6 Mbps anyway). `core.social_encode(src, out)` re-encodes an older render the same way.
    - **One video per version.** Don't make a separate `_preview.mp4` or `_mobile` copy. Only use `core.preview_encode()` if a send fails for size.
-11. **Deliver (in Cutroom):** `node "$CUTROOM_CORE/bin/cutroom.mjs" publish render "videos/<name>" edit/<slug>_vN.mp4` (it picks up `edit/cue_check.jpg`). In a Cutroom chat, end the turn; in a terminal session, publish with `--wait` in the background.
+11. **Deliver (in Cutroom):** `node "$CUTROOM_CORE/bin/cutroom.mjs" publish live "videos/<name>" <slug>`. Render and `publish render` only when the user asks for the file. In a Cutroom chat, end the turn; in a terminal session, publish with `--wait` in the background.
    - Post what changed and what to check, and ask for timestamped notes.
    - Publishing again with `_vN+1` adds a version to the same video.
    - On long builds, post a one-line status before going quiet, and give an ETA once the render starts.
