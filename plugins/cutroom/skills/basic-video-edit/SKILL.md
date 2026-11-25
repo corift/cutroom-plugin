@@ -44,7 +44,7 @@ Everything runs through `$CUTROOM_CORE/skills/basic-video-edit/scripts/basic_edi
 - **Emphasis:** at most one key phrase per sentence goes in italic serif (`--emph "one prompt,10 to 20 grand"`).
 - **Position:** one fixed spot for the whole video; captions never move around.
   - Default for landscape is 84% of the height (lower third).
-  - Default for vertical is 72%, below the face.
+  - Default for vertical is 60%: roughly the centre, just under the chin. Check a frame; move it only if it covers the face.
   - For vertical videos going to Reels, TikTok or Shorts, keep captions between 13% and 78% of the height, clear of the platform UI.
 - If Whisper returns the transcript lowercase or without punctuation, restore sentence case with `--fix` (e.g. `--fix "i=I"`), or re-transcribe with a short `prompt` that has normal punctuation.
 - Caption size scales with the frame, so it looks the same at 1080p, 4K or vertical.
@@ -53,6 +53,8 @@ Everything runs through `$CUTROOM_CORE/skills/basic-video-edit/scripts/basic_edi
 
 - Cut only between sentences. Use the word timestamps to find each boundary, and let the snap put the cut in silence.
 - Remove retakes, false starts, "wait, let me redo that", long dead air, and repeated points.
+- Cut a false start through its whole aside: in "So I was editing my… Wait, hold on. My husband…" both the trailed-off line and "Wait, hold on." go. The video starts on the first real line; re-transcribe its first second to check.
+- A complete last line is the payoff, never a mistake: a call to action ("Comment X", "follow for more", "link in bio") stays even when it ends close to the end of the clip or the transcript has no full stop. Only a line that stops mid-thought ("and then I", "so the") counts as trailing off.
 - Keep natural pacing. Don't trim every breath, because tiny jump cuts feel jarring.
 - Never reorder content or change meaning unless asked.
 - For a heavy or unclear edit (for example "cut it to 60s"), list the proposed keeps in chat before building.

@@ -49,7 +49,7 @@ edit/<slug>_vN.mp4        renders (publish these as usual)
 - A timed element has `class="clip"`, `data-start`, `data-duration`, `data-track-index` and an `id` that reads well: ids become the labels in the review timeline (`face-hook`, `sfx-click-match`).
 - Footage: `<video class="clip" muted playsinline src="assets/aroll.mp4" data-start="5.72" data-duration="31.76" data-media-start="5.72">`. `data-media-start` is where in the file it starts. Time the `<video>` itself, never a wrapper. Position and crop it with CSS on a wrapper with `overflow: hidden`: one `<video>` per stretch of a layout (full face, inset box, cutout), all reading the same file.
 - A graphic: `<div id="cost" class="scene" data-composition-id="cost" data-composition-src="compositions/cost.html" data-start="33.72" data-duration="3.76" data-track-kind="graphics" data-layout="inset" data-width="1080" data-height="1920">`. `data-layout` (`face`, `inset`, `full`, `stack`) colours the beat in review.
-- Captions: one host with `data-track-kind="captions"` running the whole reel.
+- Captions: one host with `data-track-kind="captions"` running the whole reel. Hide them while a full-screen title or hook card is up, so two lines of text never stack.
 - Sound: `<audio id="voice" class="clip" src="assets/voice.m4a" data-start="0" data-duration="…" data-volume="1">`, and one `<audio>` per sound effect at its cue. Every `<audio>` needs an `id`. Keep the footage `muted`.
 - Layer with `z-index`: backdrop, footage, graphics, inset and cutout, captions, title.
 

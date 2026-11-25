@@ -116,11 +116,12 @@ def snap(t, env, window=0.15):
     return round(best * HOP, 3)
 
 # ------------------------------------------------------------------ planning
-def plan(keeps, env, tight=(), max_pause=MAX_PAUSE, tight_pause=TIGHT_PAUSE, handle=HANDLE, thresh=SIL_DB):
+def plan(keeps, env, tight=(), max_pause=MAX_PAUSE, tight_pause=TIGHT_PAUSE, handle=HANDLE, thresh=SIL_DB, words=()):
     """keeps: [(src_start, src_end[, snap_window]), ...] rough content ranges (sentence level).
     Use a tiny snap_window (e.g. 0.02) when a boundary must stay exactly where you measured it
     (e.g. right before a retake's first word).
     tight: [(src_start, src_end)] windows where the face is hidden -> trim harder.
+    words: [(start, end)] transcribed words; a quiet stretch where one starts is speech, never a pause.
     thresh: silence level (dB). In an echo-y room plan on a dried voice track (voiceisolate.swift, 100% wet):
     the raw room tail sits above -42 dB and hides every pause.
     Returns [(s, e)] segments in source time."""
@@ -134,6 +135,7 @@ def plan(keeps, env, tight=(), max_pause=MAX_PAUSE, tight_pause=TIGHT_PAUSE, han
         cur = s
         for a, b in sil:
             if a <= s or b >= e: continue
+            if any(a + handle < ws < b - handle for ws, _ in words): continue
             limit = tight_pause if any(ta <= a and b <= tb for ta, tb in tight) else max_pause
             if b - a > limit:
                 segs.append((cur, round(a + handle, 3)))
@@ -141,10 +143,11 @@ def plan(keeps, env, tight=(), max_pause=MAX_PAUSE, tight_pause=TIGHT_PAUSE, han
         segs.append((cur, e))
     return [(a, b) for a, b in segs if b - a > 0.08]
 
-def trim_edges(segs, env, thresh=SIL_DB, head=0.08, tail=0.10):
+def trim_edges(segs, env, thresh=SIL_DB, head=0.08, tail=0.10, words=()):
     """Waveform pass: pull every segment's start/end in to where speech energy actually begins/ends
     (+ a small handle). Kills dead air that sits at a keep's edges (e.g. reaching for the camera
-    after the last word), which plan() never touches because it only trims pauses *inside* keeps."""
+    after the last word), which plan() never touches because it only trims pauses *inside* keeps.
+    words: [(start, end)] transcribed words; an edge never moves past the first or last word inside the segment."""
     out = []
     for a, b in segs:
         i0, i1 = int(a / HOP), min(len(env) - 1, int(b / HOP))
@@ -152,6 +155,10 @@ def trim_edges(segs, env, thresh=SIL_DB, head=0.08, tail=0.10):
         if not len(loud): continue
         na = max(a, round((i0 + loud[0]) * HOP - head, 3))
         nb = min(b, round((i0 + loud[-1]) * HOP + tail, 3))
+        inside = [(ws, we) for ws, we in words if a <= ws and we <= b]
+        if inside:
+            na = min(na, max(a, round(inside[0][0] - head, 3)))
+            nb = max(nb, min(b, round(inside[-1][1] + tail, 3)))
         if nb - na > 0.08: out.append((na, nb))
     return out
 

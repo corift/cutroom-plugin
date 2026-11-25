@@ -142,7 +142,7 @@ def sentences_of(words, table):
         text = w["word"].strip()
         gap = nxt["start"] - w["end"] if nxt else 9
         ends = text[-1:] in ".?!" or gap > 0.9 or (len(cur) >= 30 and text[-1:] == ",") or len(cur) >= 42
-        boundary = nxt and any(abs(c["start"] - nxt["start"]) < 0.4 for c in table[1:])
+        boundary = nxt and any(w["start"] < c["start"] - 0.1 and nxt["start"] > c["start"] - 0.4 for c in table[1:])
         if ends or boundary or not nxt:
             out.append(cur); cur = []
     sentences = []
@@ -156,6 +156,12 @@ def sentences_of(words, table):
 def _shared(a, b):
     blocks = difflib.SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks()
     return sum(m.size for m in blocks if m.size >= 2), max((m.size for m in blocks), default=0)
+
+RESTART = {"wait", "hold", "sorry", "again", "redo", "restart", "scratch", "cut", "oops", "hang"}
+ASIDE = RESTART | {"on", "let", "me", "start", "that", "try", "one", "more", "time", "okay", "ok", "um", "uh", "hmm",
+                   "actually", "no", "from", "the", "top", "i", "i'm", "gonna", "going", "to", "do", "it", "just", "a", "sec", "second", "so"}
+DANGLING = {"and", "but", "so", "or", "because", "the", "a", "an", "to", "of", "my", "your", "with", "for", "in", "on", "at",
+            "is", "was", "that", "if", "when", "like", "then", "i", "we", "you", "it's", "i'm"}
 
 def retakes(sentences):
     """Sentence ids that look like an abandoned take of a later sentence: {id: reason}."""
@@ -177,9 +183,10 @@ def retakes(sentences):
         if s["id"] in found: continue
         text = s["text"].strip().rstrip('"”')
         last = n == len(sentences) - 1
-        if len(a) <= 1 and len(sentences) > 3: found[s["id"]] = "fragment"
+        if a and len(a) <= 7 and all(w in ASIDE for w in a) and any(w in RESTART for w in a): found[s["id"]] = "restart aside"
+        elif len(a) <= 1 and len(sentences) > 3: found[s["id"]] = "fragment"
         elif re.search(r"(\.\.\.|…|--|—|-)[?!.]*$", text): found[s["id"]] = "trails off"
-        elif last and len(sentences) > 3 and text[-1:] not in ".?!": found[s["id"]] = "trails off"
+        elif last and len(sentences) > 3 and text[-1:] not in ".?!" and a and a[-1] in DANGLING: found[s["id"]] = "trails off"
         elif len(a) <= 2 and text[-1:] not in ".?!": found[s["id"]] = "false start"
     return found
 
@@ -395,7 +402,8 @@ def segments_of(video, edit):
     keeps = keeps_of(sentences, words, edit)
     if not keeps: raise SystemExit("every sentence is cut: keep at least one")
     env, thresh = cp.speech_env(path(video, "source.mp4"))
-    segs = cp.trim_edges(cp.plan(keeps, env, thresh=thresh, **PACES[edit["pace"]]), env, thresh=thresh)
+    spoken = [(w["start"], w["end"]) for w in words]
+    segs = cp.trim_edges(cp.plan(keeps, env, thresh=thresh, words=spoken, **PACES[edit["pace"]]), env, thresh=thresh, words=spoken)
     return nudged(segs, edit["nudges"]), words, sentences
 
 def nudged(segs, nudges):
@@ -451,9 +459,10 @@ def check(video):
         lines += notes
         t += b - a
     heard = path(video, "check.m4a")
-    pick = "+".join(f"between(t,{a},{b})" for a, b in segs)
+    pieces = ";".join(f"[0:a]atrim={a}:{b},asetpts=PTS-STARTPTS[a{i}]" for i, (a, b) in enumerate(segs))
+    joined = "".join(f"[a{i}]" for i in range(len(segs))) + f"concat=n={len(segs)}:v=0:a=1[out]"
     try:
-        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", src, "-vn", "-af", f"aselect='{pick}',asetpts=N/SR/TB",
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", src, "-filter_complex", f"{pieces};{joined}", "-map", "[out]",
                         "-ac", "1", "-ar", "16000", heard], check=True)
         got = cp.transcribe(heard, path(video, "check.json"))["words"]
         want, have = [_norm(w["word"]) for w in kept], [_norm(w["word"]) for w in got]
@@ -483,7 +492,7 @@ def plan(video):
     style = c["style"]
     spoken = out_words(words, meta, c["fixes"])
     spans = [] if style == "none" else cap.chunk(cap.join_phrases(spoken, c["emphasis"]), "plain" if style in EDITORIAL else style)
-    default_y = (0.78 if style == "subtitle" else 0.7) if h > w else 0.86
+    default_y = (0.78 if style == "subtitle" else 0.6) if h > w else 0.86
     n = next_version(video)
     made = {"version": n, "size": [w, h], "frame": [sw, sh], "fps": FPS, "duration": round(total, 3),
             "footage": round(probe_duration(path(video, "source.mp4")), 1), "cuts": len(segs) - 1,
@@ -516,7 +525,7 @@ def look_of(video, edit, words, meta, total, size):
     spoken = out_words(words, meta, c["fixes"])
     spans = [] if style == "none" else cap.chunk(cap.join_phrases(spoken, c["emphasis"]), "plain" if style in EDITORIAL else style)
     scale = min(w, h) / 1080
-    default_y = (0.78 if style == "subtitle" else 0.7) if h > w else 0.86
+    default_y = (0.78 if style == "subtitle" else 0.6) if h > w else 0.86
     y = (POSITIONS[c["position"]] if c["position"] else default_y) * h
     magazine = style in EDITORIAL and (w, h) == (1080, 1920)
     keys = set()
