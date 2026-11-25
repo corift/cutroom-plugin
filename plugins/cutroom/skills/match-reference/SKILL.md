@@ -35,7 +35,7 @@ You cannot hear the reference. Say so if they ask about its music or sound, and 
 ## 3. Pick the way to build it
 
 - Captions and pace only (no graphics, no text hits): use the edit tools. Choose the template and caption style closest to `edit/look.md`, set position, pace and zoom, render.
-- Anything more: read `$CUTROOM_CORE/skills/reel-edit/SKILL.md` and build a plan with it. Take each line of `edit/look.md` to the closest effect in `effects/`. Match the reference's pace: sections about as long as its shots, a camera change where it has one, the same caption position.
+- Anything more: draw it as HTML graphics with `$CUTROOM_CORE/skills/html-edit/SKILL.md` (in Autocut, as `edit/graphics/` files its instructions describe). `reel-edit/effects/` describes the moves; take each line of `edit/look.md` to the closest one and draw it in HTML. Match the reference's pace: sections about as long as its shots, a camera change where it has one, the same caption position.
 
 Use their words for every title, card and callout. The reference decides how it looks; their transcript decides what it says.
 

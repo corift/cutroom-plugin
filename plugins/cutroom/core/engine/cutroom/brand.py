@@ -19,6 +19,10 @@ _path = os.environ.get("CUTROOM_BRAND_KIT")
 if _path and os.path.exists(_path):
     with open(_path) as fh:
         _KIT = json.load(fh)
+_video = os.environ.get("CUTROOM_VIDEO_COLORS")
+if _video and os.path.exists(_video):
+    with open(_video) as fh:
+        _KIT = {**_KIT, "colors": {**_KIT.get("colors", {}), **json.load(fh)}}
 
 
 def _rgb(value):

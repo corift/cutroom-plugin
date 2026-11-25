@@ -20,6 +20,7 @@ edit.json:
               "emphasis": ["key phrase"], "fixes": {"heard": "meant"}}
   format     vertical | source              pace      tight | natural
   zoom       punch | none                   hook      text shown over the first seconds ("" for none)
+  hook_seconds  how long the hook shows (default 3.2)
   template   a named look from TEMPLATES; setting it replaces captions.style, pace, zoom and format
 """
 import difflib, functools, hashlib, json, os, re, subprocess, sys
@@ -292,6 +293,7 @@ def apply(video, patch):
             if patch[k] not in allowed: raise SystemExit(f"{k} is one of {', '.join(allowed)}")
             edit[k] = patch[k]
     if "hook" in patch: edit["hook"] = str(patch["hook"] or "").strip()
+    if "hook_seconds" in patch: edit["hook_seconds"] = max(0.5, float(patch["hook_seconds"])) if patch["hook_seconds"] else None
     c = patch.get("captions") or {}
     if "style" in c:
         if c["style"] not in STYLES: raise SystemExit(f"captions.style is one of {', '.join(STYLES)}")
@@ -501,7 +503,7 @@ def plan(video):
                          "marker": list(cap.MARKER), "accent": list(cap.ACCENT),
                          "spans": [{"s": round(x["s"], 3), "e": round(x["e"], 3), "text": x["text"], "em": x["em"],
                                     "words": [{"w": k["w"], "s": round(k["s"], 3), "e": round(k["e"], 3)} for k in x["words"]]} for x in spans]},
-            "hook": {"text": edit["hook"], "end": round(min(HOOK_SECONDS, total), 3), "y": 0.13},
+            "hook": {"text": edit["hook"], "end": round(min(edit.get("hook_seconds") or HOOK_SECONDS, total), 3), "y": 0.13},
             "zoom": {"scale": ZOOM, "cy": 0.38, "flips": [round(t, 3) for t in zoom_points(meta, total)] if edit["zoom"] == "punch" else []}}
     write(video, f"plan_v{n}.json", made)
     write(video, "cut_transcript.json", {"words": [{"word": x["w"], "start": round(x["s"], 3), "end": round(x["e"], 3)} for x in spoken]})
@@ -510,6 +512,14 @@ def plan(video):
         f.write("\n".join(s["text"] for s in sentences if s["id"] not in cut) + "\n")
     return {"file": f"edit/plan_v{n}.json", "version": n, "duration": round(total, 1), "footage": made["footage"],
             "cuts": len(segs) - 1, "size": [w, h], "device": True}
+
+def graphics_of(video):
+    listed = read(video, "graphics.json", [])
+    folder = path(video, "graphics")
+    for g in listed:
+        if not os.path.exists(os.path.join(folder, f"{g['id']}.html")):
+            raise RuntimeError(f"graphics.json lists {g['id']} but edit/graphics/{g['id']}.html is missing")
+    return {"dir": folder, "list": listed} if listed else None
 
 def renderer():
     from . import htmlcut
@@ -535,7 +545,7 @@ def look_of(video, edit, words, meta, total, size):
     return {"size": (w, h), "total": total, "style": style, "spoken": spoken, "words": spoken, "spans": spans, "scale": scale,
             "y": y / scale, "stage": (w / scale, h / scale), "cy": y if c["position"] else None, "magazine": magazine, "keys": keys,
             "flips": zoom_points(meta, total) if edit["zoom"] == "punch" else [], "zoom": ZOOM,
-            "hook": edit["hook"], "hook_end": min(HOOK_SECONDS, total)}
+            "hook": edit["hook"], "hook_end": min(edit.get("hook_seconds") or HOOK_SECONDS, total)}
 
 def render(video):
     edit = load_edit(video)
@@ -556,7 +566,7 @@ def render(video):
         from . import htmlcut
         home = path(video, "cut")
         try:
-            htmlcut.write(home, look, base, mask)
+            htmlcut.write(home, look, base, mask, graphics_of(video))
             htmlcut.render(home, out)
         except Exception as error:
             print(f"the html render failed, drawing with pillow instead: {error}", file=sys.stderr)
@@ -564,6 +574,7 @@ def render(video):
             fallback = str(error)[:300]
             if not os.path.exists(base): os.replace(os.path.join(home, "assets", "base.mp4"), base)
     if drawn == "pillow":
+        if read(video, "graphics.json", []): print("the graphics in edit/graphics.json only draw with the html renderer", file=sys.stderr)
         draw(look, base, mask, out)
     if os.path.exists(base): os.remove(base)
     spoken = look["spoken"]

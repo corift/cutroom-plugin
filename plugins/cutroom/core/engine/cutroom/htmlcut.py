@@ -157,7 +157,9 @@ def phrase_looks(layer, fonts, look):
             css = mono + "letter-spacing:0.04em;padding:14px 22px 10px;border-radius:14px;background:" + rgb(core.PILL, 225 / 255) + ";"
         else:
             text = text.rstrip(",")
-            css = (serif if style == "kallaway" and span["em"] else plain + "letter-spacing:-0.045em;") + shadow(200)
+            em = style == "kallaway" and span["em"]
+            tint = brand.color("emphasis", None) if em else None
+            css = (serif if em else plain + "letter-spacing:-0.045em;") + (f"color:{rgb(tint)};" if tint else "") + shadow(200)
         el = layer.id("span", i)
         layer.nodes.append(f'<div id="{el}" style="left:{cx:g}px;top:{y:g}px;transform:translate(-50%,-50%);{css}">{html.escape(text)}</div>')
         layer.show(el, span["s"], span["e"])
@@ -346,7 +348,26 @@ def person_clip(base, matte, out, size):
                     "-crf", "20", "-b:v", "0", out], check=True)
 
 
-def page(look, layers, fonts):
+def graphic_hosts(graphics, total):
+    out = []
+    for k, g in enumerate(graphics):
+        start = max(0.0, float(g["start"]))
+        end = min(total, start + float(g["duration"]))
+        if end > start: out.append({**g, "start": start, "duration": end - start, "track": 6 + k})
+    return out
+
+
+def add_graphics(home, source, graphics, total):
+    if not graphics: return []
+    hosts = graphic_hosts(graphics, total)
+    for g in hosts:
+        shutil.copyfile(os.path.join(source, f"{g['id']}.html"), os.path.join(home, "compositions", f"{g['id']}.html"))
+    assets = os.path.join(source, "assets")
+    if os.path.isdir(assets): shutil.copytree(assets, os.path.join(home, "assets"), dirs_exist_ok=True)
+    return hosts
+
+
+def page(look, layers, fonts, graphics=()):
     w, h = look["size"]
     total = num(look["total"])
     z = look["zoom"]
@@ -364,6 +385,12 @@ def page(look, layers, fonts):
         parts.append(f'<div id="{name}" class="scene" style="z-index:{track}" data-composition-id="{name}" '
                      f'data-composition-src="compositions/{name}.html" data-start="0" data-duration="{num(end)}" '
                      f'data-track-index="{track}" data-track-kind="{kind}" data-width="{w}" data-height="{h}"></div>')
+    hidden = []
+    for g in graphics:
+        parts.append(f'<div id="{g["id"]}" class="scene" style="z-index:{g["track"]}" data-composition-id="{g["id"]}" '
+                     f'data-composition-src="compositions/{g["id"]}.html" data-start="{num(g["start"])}" data-duration="{num(g["duration"])}" '
+                     f'data-track-index="{g["track"]}" data-track-kind="graphics" data-width="{w}" data-height="{h}"></div>')
+        if g.get("covers", True): hidden.append([num(g["start"]), num(g["start"] + g["duration"])])
     flips = []
     for k, t in enumerate(look["flips"]):
         flips.append([num(t), z if k % 2 == 0 else 1])
@@ -394,6 +421,7 @@ def page(look, layers, fonts):
         const tl = gsap.timeline({{ paused: true }});
         const flips = {json.dumps(flips)};
         for (const [t, scale] of flips) tl.set({json.dumps(", ".join(zooms))}, {{ scale }}, t);
+        for (const [a, b] of {json.dumps(hidden)}) {{ tl.set("#captions", {{ opacity: 0 }}, a); tl.set("#captions", {{ opacity: 1 }}, b); }}
         tl.set("#root", {{}}, {total});
         window.__timelines["main"] = tl;
       }})();
@@ -403,7 +431,7 @@ def page(look, layers, fonts):
 """
 
 
-def write(home, look, base, matte=None):
+def write(home, look, base, matte=None, graphics=None):
     if os.path.isdir(home): shutil.rmtree(home)
     os.makedirs(os.path.join(home, "compositions"))
     os.makedirs(os.path.join(home, "assets"))
@@ -434,7 +462,8 @@ def write(home, look, base, matte=None):
         layers.append(("hook", "graphics", look["hook_end"], 5))
     for name, layer in files.items():
         with open(os.path.join(home, "compositions", f"{name}.html"), "w") as f: f.write(layer.file())
-    with open(os.path.join(home, "index.html"), "w") as f: f.write(page(look, layers, fonts))
+    hosts = add_graphics(home, graphics["dir"], graphics["list"], look["total"]) if graphics else []
+    with open(os.path.join(home, "index.html"), "w") as f: f.write(page(look, layers, fonts, hosts))
     with open(os.path.join(home, "hyperframes.json"), "w") as f:
         json.dump({"paths": {"blocks": "compositions", "assets": "assets"}, "media": {"autoProxy": True}}, f, indent=2)
     return layers
