@@ -390,7 +390,7 @@ def page(look, layers, fonts, graphics=()):
         parts.append(f'<div id="{g["id"]}" class="scene" style="z-index:{g["track"]}" data-composition-id="{g["id"]}" '
                      f'data-composition-src="compositions/{g["id"]}.html" data-start="{num(g["start"])}" data-duration="{num(g["duration"])}" '
                      f'data-track-index="{g["track"]}" data-track-kind="graphics" data-width="{w}" data-height="{h}"></div>')
-        if g.get("covers", True): hidden.append([num(g["start"]), num(g["start"] + g["duration"])])
+        hidden.append([num(g["start"]), num(g["start"] + g["duration"])])
     flips = []
     for k, t in enumerate(look["flips"]):
         flips.append([num(t), z if k % 2 == 0 else 1])
