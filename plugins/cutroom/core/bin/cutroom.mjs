@@ -71,6 +71,7 @@ import {
   createWriteStream,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -79,7 +80,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { open, rename } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -134,6 +135,11 @@ const HYPERFRAMES_BLOCKED = [
 ];
 const COMPOSE = ["init", "check", "frames", "preview", "render", "hyperframes"];
 const LANES = ["Footage", "Graphics", "Overlays", "Captions", "Sound"];
+const SNAPSHOT_BATCH = 20;
+const SNAPSHOT_BYTES = 2_000_000;
+const PEAK_RATE = 4000;
+const PEAKS_PER_SECOND = 25;
+const PEAKS_MAX = 1500;
 const INLINE_MAX = 512 * 1024;
 const RENDER_ENV = [
   "CUTROOM_HOME",
@@ -421,7 +427,30 @@ async function pushLive({ dir, slug }) {
   if (missing.length)
     console.log(`${comp}: plays as the MP4 elsewhere; left out ${missing.join(", ")}`);
   else console.log(`${comp}: plays live on cutroom.so`);
-  return !missing.length;
+  return { complete: !missing.length, paths, stamp };
+}
+
+async function keepVersion({ reviewId, version, paths, stamp }) {
+  const batches = [[]];
+  let bytes = 0;
+  for (const path of paths) {
+    const size = TEXT_EXT.has(extname(path).toLowerCase())
+      ? Math.min(statSync(F.toLocal(path)).size, INLINE_MAX)
+      : 0;
+    if (batches.at(-1).length >= SNAPSHOT_BATCH || bytes + size > SNAPSHOT_BYTES) {
+      batches.push([]);
+      bytes = 0;
+    }
+    batches.at(-1).push(path);
+    bytes += size;
+  }
+  for (const [i, batch] of batches.entries())
+    await convex("mutation", "lives:snapshot", {
+      reviewId,
+      version,
+      paths: batch,
+      ...(i === batches.length - 1 ? { stamp } : {})
+    });
 }
 
 async function liveVersionOf({ dir, slug }) {
@@ -435,16 +464,13 @@ async function publishLive({ dir, slug, opts }) {
   if (!slug) throw new Error('which edit? e.g. cutroom publish live "<video folder>" my_reel');
   const comp = `${dir}/edit/${slug}`;
   if (!F.exists(`${comp}/index.html`)) throw new Error(`${comp}/index.html not found`);
-  const complete = await pushLive({ dir, slug });
+  const { complete, paths, stamp } = await pushLive({ dir, slug });
   if (!complete)
     throw new Error(
       `${comp} can't play live (see above): move those files into edit/${slug}/assets/ or render it`
     );
   const version = Number(opts.version ?? (await liveVersionOf({ dir, slug })).latest + 1);
-  const { beats, words } = withLayers({
-    ...storyboardOf(F.toLocal(`${dir}/edit`)),
-    composition: compositionOf(F.toLocal(comp))
-  });
+  const { beats, words } = await timelineOf({ dir, slug });
   const copy = Object.fromEntries(
     ["caption", "script"]
       .map((field) => [field, `${dir}/edit/${slug}.${field}.md`])
@@ -465,6 +491,9 @@ async function publishLive({ dir, slug, opts }) {
     ...(opts.title ? { title: opts.title } : {}),
     ...(process.env.CUTROOM_CHAT_ID ? { chatId: process.env.CUTROOM_CHAT_ID } : {})
   });
+  await keepVersion({ reviewId: id, version, paths, stamp }).catch((error) =>
+    console.log(`  v${version} won't replay after the next version: ${error.message}`)
+  );
   console.log(`published live ${slug} v${version} → review ${id} (no render)`);
 }
 
@@ -574,10 +603,10 @@ async function publishOne(kind, dir, fileArg, opts) {
   }
   if (opts.version) version = Number(opts.version);
 
-  const { beats, words } = withLayers({
-    ...storyboardOf(F.toLocal(editDir)),
-    composition: kind === "render" ? compositionOf(join(F.toLocal(editDir), stem)) : null
-  });
+  const { beats, words } =
+    kind === "render" && editDir === `${dir}/edit`
+      ? await timelineOf({ dir, slug: stem })
+      : storyboardOf(F.toLocal(editDir));
   const images = [
     [["storyboard_board.jpg", "sully_storyboard_board.jpg"], "Storyboard board"],
     ...(kind === "render" ? [[["cue_check.jpg", "sully_cue_check.jpg"], "Cue check"]] : [])
@@ -1128,6 +1157,10 @@ async function compose({ action, dir, slug, flags, tail }) {
   if (action === "check") return run(["check"]);
   if (action === "hyperframes") {
     if (!tail.length) throw new Error(`compose hyperframes "<video folder>" <slug> -- <command>`);
+    if (tail[0] === "render")
+      throw new Error(
+        `render with compose render "${dir}" ${slug}: it names the file for the version and runs in the cloud when Render in the cloud is on`
+      );
     if (HYPERFRAMES_BLOCKED.includes(tail[0]))
       throw new Error(
         `hyperframes ${tail[0]} is off in Cutroom: it reports back, publishes or updates outside the pin`
@@ -1218,6 +1251,8 @@ function compositionOf(home) {
       t0: Number(attr(tag, "data-start")),
       t1: round(Number(attr(tag, "data-start")) + Number(attr(tag, "data-duration") ?? 0)),
       src: attr(tag, "data-composition-src"),
+      media: attr(tag, "src"),
+      mediaStart: Number(attr(tag, "data-media-start") ?? 0),
       kind: attr(tag, "data-track-kind"),
       layout: attr(tag, "data-layout"),
       root: !!attr(tag, "data-composition-id") && !attr(tag, "data-composition-src")
@@ -1235,9 +1270,28 @@ function compositionOf(home) {
           : c.src || c.kind === "graphics"
             ? "Graphics"
             : "Overlays";
+  const soundOf = (c) =>
+    c.element === "audio" && c.media && existsSync(join(home, c.media))
+      ? { file: join(home, c.media), t0: c.t0, t1: c.t1, mediaStart: c.mediaStart }
+      : null;
+  const sounds = clips.flatMap((c) => soundOf(c) ?? []);
   const layers = clips
-    .map((c) => ({ lane: lane(c), label: c.id.replace(/[-_]+/g, " "), t0: c.t0, t1: c.t1 }))
+    .map((c) => {
+      const sound = soundOf(c);
+      const peaks = sound ? peaksOf(sound) : null;
+      return {
+        lane: lane(c),
+        label: c.id.replace(/[-_]+/g, " "),
+        t0: c.t0,
+        t1: c.t1,
+        ...(peaks ? { peaks } : {})
+      };
+    })
     .sort((a, b) => LANES.indexOf(a.lane) - LANES.indexOf(b.lane) || a.t0 - b.t0);
+  const voice = sounds.reduce(
+    (longest, s) => (!longest || s.t1 - s.t0 > longest.t1 - longest.t0 ? s : longest),
+    null
+  );
   const scenes = clips.filter((c) => lane(c) === "Graphics");
   const beats = [];
   let at = 0;
@@ -1265,7 +1319,87 @@ function compositionOf(home) {
     captionFile && existsSync(captionFile)
       ? captionWords({ html: readFileSync(captionFile, "utf8"), offset: captions.t0 })
       : [];
-  return { beats, layers, words };
+  return { beats, layers, words, voice };
+}
+
+function peaksOf({ file, t0, t1, mediaStart }) {
+  const seconds = t1 - t0;
+  const run = spawnSync(
+    process.env.CUTROOM_FFMPEG ?? "ffmpeg",
+    [
+      ["-v", "error", "-ss", String(mediaStart), "-t", String(seconds), "-i", file],
+      ["-vn", "-ac", "1", "-ar", String(PEAK_RATE), "-f", "u8", "-"]
+    ].flat(),
+    { stdio: ["ignore", "pipe", "ignore"], maxBuffer: 256 * 1024 * 1024 }
+  );
+  if (run.error || run.status !== 0 || !run.stdout?.length) return null;
+  const samples = run.stdout;
+  const count = Math.max(4, Math.min(PEAKS_MAX, Math.round(seconds * PEAKS_PER_SECOND)));
+  const each = (seconds * PEAK_RATE) / count;
+  const peaks = Array.from({ length: count }, (_, i) => {
+    let peak = 0;
+    const end = Math.min(samples.length, Math.ceil((i + 1) * each));
+    for (let at = Math.floor(i * each); at < end; at++)
+      peak = Math.max(peak, Math.abs(samples[at] - 128));
+    return peak;
+  });
+  const loudest = Math.max(...peaks);
+  return loudest ? peaks.map((peak) => Math.round((peak / loudest) * 100)) : null;
+}
+
+async function timelineOf({ dir, slug }) {
+  const composition = compositionOf(F.toLocal(`${dir}/edit/${slug}`));
+  const timeline = withLayers({ ...storyboardOf(F.toLocal(`${dir}/edit`)), composition });
+  if (timeline.words.length || !composition?.voice) return timeline;
+  const words = await spokenWords({
+    voice: composition.voice,
+    cache: F.toLocal(`${dir}/edit/${slug}.transcript.json`)
+  }).catch((error) => {
+    console.log(`  no transcript: ${error.message}`);
+    return [];
+  });
+  return { ...timeline, words };
+}
+
+async function spokenWords({ voice, cache }) {
+  const { file, t0, t1, mediaStart } = voice;
+  const source = [await hashFile(file), t0, t1, mediaStart].join(":");
+  if (existsSync(cache)) {
+    const saved = JSON.parse(readFileSync(cache, "utf8"));
+    if (saved.source === source) return saved.words;
+  }
+  const scratch = mkdtempSync(join(tmpdir(), "cutroom-transcript-"));
+  try {
+    const mp3 = join(scratch, "voice.mp3");
+    const made = spawnSync(
+      process.env.CUTROOM_FFMPEG ?? "ffmpeg",
+      [
+        ["-y", "-v", "error", "-ss", String(mediaStart), "-t", String(t1 - t0), "-i", file],
+        ["-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k", mp3]
+      ].flat(),
+      { stdio: ["ignore", "ignore", "pipe"] }
+    );
+    if (made.error || made.status !== 0) throw new Error("ffmpeg could not read the voice track");
+    process.stdout.write(`  transcribing ${basename(file)}\n`);
+    const res = await fetch(`${CONVEX_URL.replace(".convex.cloud", ".convex.site")}/transcribe`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${KEY}`, "content-type": "audio/mpeg" },
+      body: readFileSync(mp3)
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.words)
+      throw new Error(body.error ?? `transcription failed (${res.status})`);
+    const round = (seconds) => Math.round(seconds * 1000) / 1000;
+    const words = body.words.map((w) => ({
+      w: w.word,
+      s: round(t0 + w.start),
+      e: round(t0 + w.end)
+    }));
+    writeFileSync(cache, `${JSON.stringify({ source, words })}\n`);
+    return words;
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 function captionWords({ html, offset }) {
